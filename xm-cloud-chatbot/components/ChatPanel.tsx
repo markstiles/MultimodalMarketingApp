@@ -11,6 +11,7 @@ import toast, { Toaster } from 'react-hot-toast';
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  images?: string[];
   timestamp?: Date;
 }
 
@@ -95,7 +96,10 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                       const lastMessage = newMessages[newMessages.length - 1];
                       
                       if (lastMessage?.role === 'assistant') {
-                        lastMessage.content = assistantMessage;
+                        newMessages[newMessages.length - 1] = {
+                          ...lastMessage,
+                          content: assistantMessage,
+                        };
                       } else {
                         newMessages.push({
                           role: 'assistant',
@@ -104,6 +108,32 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                         });
                       }
                       
+                      return newMessages;
+                    });
+                    break;
+
+                  case 'image':
+                    setMessages((prev) => {
+                      const newMessages = [...prev];
+                      const lastMessage = newMessages[newMessages.length - 1];
+                      const urls: string[] = data.urls || [];
+
+                      if (lastMessage?.role === 'assistant') {
+                        newMessages[newMessages.length - 1] = {
+                          ...lastMessage,
+                          images: [...(lastMessage.images || []), ...urls],
+                          content: lastMessage.content || assistantMessage,
+                          timestamp: new Date(),
+                        };
+                      } else {
+                        newMessages.push({
+                          role: 'assistant',
+                          content: assistantMessage,
+                          images: urls,
+                          timestamp: new Date(),
+                        });
+                      }
+
                       return newMessages;
                     });
                     break;

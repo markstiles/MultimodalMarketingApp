@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { prisma } from '@/lib/db';
 import { getMCPClient } from '@/lib/mcp/search-client';
-import { getSitecoreSearchTools } from '@/lib/mcp/tools';
+import { getAllTools } from '@/lib/mcp/tools';
 import { getAssistantConfig } from '@/lib/prompts/templates';
 import { classifyIntent } from '@/lib/utils/classify-intent';
 import { generateConversationTitle } from '@/lib/utils/generate-title';
@@ -128,10 +128,10 @@ export async function POST(req: NextRequest) {
     const mcpCalls: Array<{ tool: string; args: unknown; result: unknown }> = [];
 
     // Get Sitecore Search tools (optional - gracefully handle if MCP not available)
-    let tools: ReturnType<typeof getSitecoreSearchTools> | undefined;
+    let tools: ReturnType<typeof getAllTools> | undefined;
     try {
-      tools = getSitecoreSearchTools();
-      console.log('Sitecore Search tools loaded:', tools?.length || 0, 'tools');
+      tools = getAllTools();
+      console.log('Tools loaded:', tools?.length || 0, 'tools');
     } catch (error) {
       console.warn('MCP tools not available, continuing without them:', error);
       tools = undefined;
@@ -155,12 +155,12 @@ export async function POST(req: NextRequest) {
           const toolCallAccumulator: Record<number, { id?: string; name?: string; arguments: string }> = {};
           
           for await (const chunk of completion) {
-            console.log('Received chunk:', chunk);
+            //console.log('Received chunk:', chunk);
             const delta = chunk.choices[0]?.delta;
 
             // Handle tool calls (accumulate arguments across chunks)
             if (delta?.tool_calls) {
-              console.log('Processing tool calls in chunk:', delta.tool_calls);
+              //console.log('Processing tool calls in chunk:', delta.tool_calls);
               for (const toolCall of delta.tool_calls) {
                 const index = toolCall.index ?? 0;
                 
@@ -192,18 +192,67 @@ export async function POST(req: NextRequest) {
                   try {
                     const args = JSON.parse(accumulated.arguments);
                     
-                    if (tools) {
-                      // Ensure fields parameter exists for Sitecore search tools
-                      if (!args.fields && (
-                        accumulated.name === 'sitecore_search_query' ||
-                        accumulated.name === 'sitecore_search_with_facets' ||
-                        accumulated.name === 'sitecore_ai_search'
-                      )) {
-                        args.fields = ['name', 'description'];
-                      }
-                      
-                      console.log(`Executing ${accumulated.name} with args:`, args);
-                      
+                    if (!tools) continue;
+
+                    // Ensure fields parameter exists for Sitecore search tools
+                    if (!args.fields && (
+                      accumulated.name === 'sitecore_search_query' ||
+                      accumulated.name === 'sitecore_search_with_facets' ||
+                      accumulated.name === 'sitecore_ai_search'
+                    )) {
+                      args.fields = ['name', 'description'];
+                    }
+
+                    console.log(`Executing ${accumulated.name} with args:`, args);
+
+                    // Handle image generation locally via OpenAI images API
+                    if (accumulated.name === 'generate_image') {
+                      const imageResult = await openai.images.generate({
+                        //model: 'gpt-image-1',
+                        model: 'dall-e-3',
+                        prompt: args.prompt,
+                        size: args.size || '1024x1024',
+                        n: args.n || 1,
+                      });
+
+                      const urls = (imageResult.data ?? [])
+                        .map((d) => d.url)
+                        .filter((u): u is string => Boolean(u));
+
+                      // Emit SSE event to client with image URLs
+                      const imagePayload = JSON.stringify({
+                        type: 'image',
+                        urls,
+                        prompt: args.prompt,
+                      });
+                      controller.enqueue(encoder.encode(`data: ${imagePayload}\n\n`));
+
+                      const formattedResult = { urls, prompt: args.prompt, size: args.size };
+
+                      // Track analytics
+                      await prisma.analytics.create({
+                        data: {
+                          conversationId: conversation.id,
+                          eventType: 'mcp_call',
+                          eventData: {
+                            tool: accumulated.name,
+                            args,
+                            timestamp: new Date(),
+                          },
+                        },
+                      });
+
+                      // Add tool result to feed back into the model
+                      toolResults.push({
+                        role: 'tool',
+                        tool_call_id: accumulated.id,
+                        content: JSON.stringify(formattedResult),
+                      });
+
+                      mcpCalls.push({ tool: accumulated.name, args, result: formattedResult });
+                      console.log(`Tool ${accumulated.name} executed successfully`);
+                    } else {
+                      // Default: execute via MCP client
                       const mcpClient = await getMCPClient();
                       const result = await mcpClient.callTool(accumulated.name, args);
                       console.log(`Result from ${accumulated.name}:`, result);

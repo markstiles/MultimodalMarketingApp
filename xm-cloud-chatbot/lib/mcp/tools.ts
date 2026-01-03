@@ -144,3 +144,37 @@ export const SITECORE_SEARCH_TOOLS = [
 export function getSitecoreSearchTools() {
   return SITECORE_SEARCH_TOOLS;
 }
+
+// Image generation tool for OpenAI function calling
+export const IMAGE_GENERATION_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'generate_image',
+    description: 'Generate marketing-ready images from a concise prompt.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'Detailed image description including subject, style, and composition.',
+        },
+        size: {
+          type: 'string',
+          enum: ['1024x1024', '1024x1792', '1792x1024'],
+          description: 'Output resolution (default 1024x1024).',
+        },
+        n: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 4,
+          description: 'Number of images to generate (default 1).',
+        },
+      },
+      required: ['prompt'],
+    },
+  },
+};
+
+export function getAllTools() {
+  return [...SITECORE_SEARCH_TOOLS, IMAGE_GENERATION_TOOL];
+}

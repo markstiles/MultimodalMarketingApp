@@ -41,6 +41,33 @@ You have access to the current page context through the conversation metadata:
 Conversations persist across pages within the same site, so you can reference previous discussions even if the user has navigated to a different page. Always check the currentPageId to understand which page the current message relates to.
 `;
 
+const IMAGE_GENERATION_INSTRUCTIONS = `
+Image generation:
+- If the user asks for an image/visual/hero/banner/illustration, call the function tool generate_image with a concise, descriptive prompt.
+- Include subject, setting, mood, and lighting in the prompt; use 1024x1024 unless the user specifies otherwise.
+
+## Image Generation Instructions
+
+When the user requests an image, generate it supports three output resolutions:
+
+- size value: 1024x1024, description: square
+- size value: 1024x1536, description: portrait
+- size value: 1536x1024, description: landscape
+
+They can all be set to use different quality tiers. The values for the gpt-image-1 tiers are:
+
+- Low
+- Medium
+- High
+
+The values for the dall-e-3 tiers are:
+
+- Standard
+- HD
+
+If the user doesn't specify a resolution, ask which option and/or quality tier they want.
+`;
+
 export const ASSISTANT_TEMPLATES: Record<AssistantType, AssistantConfig> = {
   content_auditor: {
     type: 'content_auditor',
@@ -64,6 +91,7 @@ export const ASSISTANT_TEMPLATES: Record<AssistantType, AssistantConfig> = {
 ${getMCPToolsDescription()}
 
 ${PAGE_CONTEXT_INSTRUCTIONS}
+${IMAGE_GENERATION_INSTRUCTIONS}
 
 Your primary responsibilities:
 1. Use sitecore_search_query and sitecore_search_with_facets to analyze existing content across the site
@@ -104,6 +132,7 @@ Always be specific about what you found and what actions the user should take. R
 ${getMCPToolsDescription()}
 
 ${PAGE_CONTEXT_INSTRUCTIONS}
+${IMAGE_GENERATION_INSTRUCTIONS}
 
 Your primary responsibilities:
 1. Help users design end-to-end marketing campaigns with clear objectives and strategies
@@ -145,6 +174,7 @@ Be creative but data-driven. Reference successful patterns from existing content
 ${getMCPToolsDescription()}
 
 ${PAGE_CONTEXT_INSTRUCTIONS}
+${IMAGE_GENERATION_INSTRUCTIONS}
 
 Your primary responsibilities:
 1. Analyze content for SEO optimization opportunities using sitecore_search_query
@@ -186,6 +216,7 @@ Always focus on practical, implementable suggestions. Reference specific pages a
 ${getMCPToolsDescription()}
 
 ${PAGE_CONTEXT_INSTRUCTIONS}
+${IMAGE_GENERATION_INSTRUCTIONS}
 
 Your primary responsibilities:
 1. Generate component content (headlines, body copy, CTAs) based on campaign context
