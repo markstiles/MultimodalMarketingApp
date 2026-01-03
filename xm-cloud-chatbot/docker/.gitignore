@@ -1,0 +1,22 @@
+# Ignore database data
+data/
+
+# Ignore logs
+logs/
+
+# Ignore secrets (sensitive)
+secrets/
+
+# Ignore SSL certificates
+certs/*.key
+certs/*.crt
+certs/*.csr
+certs/*.pem
+
+# Keep directory structure
+!data/.gitkeep
+!logs/.gitkeep
+!certs/.gitkeep
+!secrets/.gitkeep
+!secrets/pg_user.txt.example
+!secrets/pg_pw.txt.example

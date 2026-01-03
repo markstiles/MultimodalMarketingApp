@@ -1,0 +1,33 @@
+{
+  "name": "XM Cloud AI Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered chatbot assistant for XM Cloud Pages Editor",
+  "type": "sidePanel",
+  "icon": "https://your-deployment-url.vercel.app/icon.png",
+  "configuration": {
+    "panel": {
+      "title": "AI Assistant",
+      "url": "https://your-deployment-url.vercel.app/editor-panel",
+      "width": 400,
+      "position": "right"
+    },
+    "permissions": [
+      "pages:read",
+      "pages:write",
+      "components:read",
+      "components:write",
+      "context:read"
+    ],
+    "communication": {
+      "type": "postMessage",
+      "allowedOrigins": [
+        "https://your-deployment-url.vercel.app"
+      ]
+    }
+  },
+  "metadata": {
+    "author": "Your Organization",
+    "category": "AI & Automation",
+    "documentation": "https://your-deployment-url.vercel.app/docs"
+  }
+}

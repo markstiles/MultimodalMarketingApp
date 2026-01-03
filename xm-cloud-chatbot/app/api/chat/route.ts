@@ -1,0 +1,383 @@
+import { NextRequest, NextResponse } from 'next/server';
+import OpenAI from 'openai';
+import { prisma } from '@/lib/db';
+import { getMCPClient } from '@/lib/mcp/search-client';
+import { getSitecoreSearchTools } from '@/lib/mcp/tools';
+import { getAssistantConfig } from '@/lib/prompts/templates';
+import { classifyIntent } from '@/lib/utils/classify-intent';
+import { generateConversationTitle } from '@/lib/utils/generate-title';
+import { AssistantType } from '@/lib/types/assistant';
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const {
+      conversationId,
+      message,
+      userId,
+      siteId,
+      currentPageId,
+    } = body;
+
+    if (!message || !userId || !siteId) {
+      return NextResponse.json(
+        { error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    // Get or create conversation
+    let conversation = conversationId
+      ? await prisma.conversation.findUnique({
+          where: { id: conversationId },
+          include: { messages: { orderBy: { timestamp: 'asc' } } },
+        })
+      : null;
+    console.log('Conversation fetched:', conversation?.id || 'new conversation');
+
+    // Get conversation history
+    const conversationHistory = conversation?.messages.map((m: { role: string; content: string }) => ({
+      role: m.role,
+      content: m.content,
+    })) || [];
+    console.log('Conversation history length:', conversationHistory.length);
+
+    // Classify intent (initial or reclassification)
+    const intentResult = await classifyIntent(
+      message,
+      conversationHistory.length > 0 ? conversationHistory : undefined,
+      conversation?.assistantType as AssistantType | undefined
+    );
+    console.log('Intent classification result:', intentResult);
+
+    // Create new conversation if needed
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          userId,
+          siteId,
+          assistantType: intentResult.assistantType,
+          metadata: { currentPageId },
+        },
+        include: { messages: true },
+      });
+    } else if (intentResult.shouldSwitch) {
+      // Update conversation assistant type if switching
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { assistantType: intentResult.assistantType },
+        include: { messages: { orderBy: { timestamp: 'asc' } } },
+      });
+
+      // Track assistant switch in analytics
+      await prisma.analytics.create({
+        data: {
+          conversationId: conversation.id,
+          eventType: 'assistant_switch',
+          eventData: {
+            from: conversation.assistantType,
+            to: intentResult.assistantType,
+            confidence: intentResult.confidence,
+            reasoning: intentResult.reasoning,
+          },
+        },
+      });
+    }
+
+    // Save user message
+    const userMessage = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'user',
+        content: message,
+        currentPageId,
+      },
+    });
+
+    // Get assistant configuration
+    const assistantConfig = getAssistantConfig(
+      conversation.assistantType as AssistantType
+    );
+
+    // Prepare messages for OpenAI
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      {
+        role: 'system',
+        content: assistantConfig.systemPrompt,
+      },
+      ...conversationHistory.map(
+        (msg: { role: string; content: string }): OpenAI.Chat.ChatCompletionMessageParam => ({
+          role: msg.role as 'user' | 'assistant' | 'system',
+          content: msg.content,
+        })
+      ),
+      {
+        role: 'user',
+        content: message,
+      },
+    ];
+
+    // Prepare streaming response
+    const startTime = Date.now();
+    let fullResponse = '';
+    let tokenCount = 0;
+    const mcpCalls: Array<{ tool: string; args: unknown; result: unknown }> = [];
+
+    // Get Sitecore Search tools (optional - gracefully handle if MCP not available)
+    let tools: ReturnType<typeof getSitecoreSearchTools> | undefined;
+    try {
+      tools = getSitecoreSearchTools();
+      console.log('Sitecore Search tools loaded:', tools?.length || 0, 'tools');
+    } catch (error) {
+      console.warn('MCP tools not available, continuing without them:', error);
+      tools = undefined;
+    }
+
+    // Stream response
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4-turbo',
+            messages,
+            tools,
+            stream: true,
+            temperature: 0.7,
+          });
+          
+          const encoder = new TextEncoder();
+          
+          // Accumulate tool calls across chunks
+          const toolCallAccumulator: Record<number, { id?: string; name?: string; arguments: string }> = {};
+          
+          for await (const chunk of completion) {
+            console.log('Received chunk:', chunk);
+            const delta = chunk.choices[0]?.delta;
+
+            // Handle tool calls (accumulate arguments across chunks)
+            if (delta?.tool_calls) {
+              console.log('Processing tool calls in chunk:', delta.tool_calls);
+              for (const toolCall of delta.tool_calls) {
+                const index = toolCall.index ?? 0;
+                
+                if (!toolCallAccumulator[index]) {
+                  toolCallAccumulator[index] = { arguments: '' };
+                }
+                
+                if (toolCall.id) {
+                  toolCallAccumulator[index].id = toolCall.id;
+                }
+                
+                if (toolCall.function?.name) {
+                  toolCallAccumulator[index].name = toolCall.function.name;
+                }
+                
+                if (toolCall.function?.arguments) {
+                  toolCallAccumulator[index].arguments += toolCall.function.arguments;
+                }
+              }
+            }
+            
+            // Execute accumulated tool calls when streaming finishes
+            if (chunk.choices[0]?.finish_reason === 'tool_calls') {
+              console.log('Tool calls complete, executing...');
+              for (const accumulated of Object.values(toolCallAccumulator)) {
+                if (accumulated.name && accumulated.arguments) {
+                  try {
+                    const args = JSON.parse(accumulated.arguments);
+                    console.log(`Executing ${accumulated.name} with args:`, args);
+                    
+                    if (tools) {
+                      const mcpClient = await getMCPClient();
+                      const result = await mcpClient.callTool(accumulated.name, args);
+                      console.log(`Result from ${accumulated.name}:`, result);
+                      mcpCalls.push({
+                        tool: accumulated.name,
+                        args,
+                        result,
+                      });
+
+                      // Track MCP call in analytics
+                      await prisma.analytics.create({
+                        data: {
+                          conversationId: conversation.id,
+                          eventType: 'mcp_call',
+                          eventData: {
+                            tool: accumulated.name,
+                            args,
+                            timestamp: new Date(),
+                          },
+                        },
+                      });
+                      
+                      console.log(`Tool ${accumulated.name} executed successfully`);
+                    }
+                  } catch (error) {
+                    console.error('MCP tool call error:', error);
+                    // Continue without MCP - don't break the chat
+                  }
+                }
+              }
+            }
+
+            // Handle content
+            if (delta?.content) {
+              fullResponse += delta.content;
+              tokenCount++;
+
+              // Send chunk to client
+              const data = JSON.stringify({
+                type: 'content',
+                content: delta.content,
+              });
+              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+            }
+
+            // Handle finish
+            if (chunk.choices[0]?.finish_reason === 'stop') {
+              const latency = Date.now() - startTime;
+
+              // Save assistant message
+              await prisma.message.create({
+                data: {
+                  conversationId: conversation.id,
+                  role: 'assistant',
+                  content: fullResponse,
+                  currentPageId,
+                  tokens: tokenCount,
+                  //mcpCalls: mcpCalls,
+                  latencyMs: latency,
+                },
+              });
+
+              // Track token usage
+              await prisma.analytics.create({
+                data: {
+                  conversationId: conversation.id,
+                  eventType: 'token_usage',
+                  eventData: {
+                    tokens: tokenCount,
+                    latencyMs: latency,
+                  },
+                },
+              });
+
+              // Generate title after 2nd message (1st user + 1st assistant)
+              const messageCount = await prisma.message.count({
+                where: { conversationId: conversation.id },
+              });
+
+              if (messageCount === 2 && !conversation.title) {
+                const title = await generateConversationTitle([
+                  { role: 'user', content: message },
+                  { role: 'assistant', content: fullResponse },
+                ]);
+
+                await prisma.conversation.update({
+                  where: { id: conversation.id },
+                  data: { title },
+                });
+
+                // Send title update to client
+                const titleData = JSON.stringify({
+                  type: 'title',
+                  title,
+                });
+                controller.enqueue(encoder.encode(`data: ${titleData}\n\n`));
+              }
+
+              // Send assistant switch notification if applicable
+              if (intentResult.shouldSwitch) {
+                const switchData = JSON.stringify({
+                  type: 'assistant_switch',
+                  newAssistant: intentResult.assistantType,
+                  confidence: intentResult.confidence,
+                });
+                controller.enqueue(encoder.encode(`data: ${switchData}\n\n`));
+              }
+
+              // Send completion
+              const doneData = JSON.stringify({
+                type: 'done',
+                conversationId: conversation.id,
+              });
+              controller.enqueue(encoder.encode(`data: ${doneData}\n\n`));
+            }
+          }
+
+          controller.close();
+        } catch (error) {
+          console.error('Streaming error:', error);
+          controller.error(error);
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  } catch (error) {
+    console.error('Chat API error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+// Get conversation history
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const userId = searchParams.get('userId');
+    const siteId = searchParams.get('siteId');
+    const conversationId = searchParams.get('conversationId');
+
+    if (conversationId) {
+      // Get specific conversation
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: {
+          messages: { orderBy: { timestamp: 'asc' } },
+        },
+      });
+
+      return NextResponse.json({ conversation });
+    }
+
+    if (!userId || !siteId) {
+      return NextResponse.json(
+        { error: 'Missing userId or siteId' },
+        { status: 400 }
+      );
+    }
+
+    // Get all conversations for user and site
+    const conversations = await prisma.conversation.findMany({
+      where: { userId, siteId },
+      include: {
+        messages: {
+          orderBy: { timestamp: 'asc' },
+          take: 1, // Just first message for preview
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return NextResponse.json({ conversations });
+  } catch (error) {
+    console.error('Get conversations error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}

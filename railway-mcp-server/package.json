@@ -1,0 +1,12 @@
+{
+  "name": "sitecore-search-mcp-railway",
+  "version": "1.0.0",
+  "description": "Sitecore Search MCP Server for Railway deployment",
+  "type": "module",
+  "scripts": {
+    "start": "npx -y @markstiles/sitecore-search-mcp"
+  },
+  "dependencies": {
+    "@markstiles/sitecore-search-mcp": "^1.0.1"
+  }
+}
