@@ -1,0 +1,14 @@
+
+* audio interface
+* convert content to audio (blogcast)
+* integrate marketing mcp 
+* create pages from generated content
+* polish up the UI 
+* allow audience to try it out
+* build better test content to analyze (import from somewhere)
+* create content data for site-specific brand voice
+* make models easy to change out
+* testing
+    * session and conversation threads
+    * content research 
+    * campaign 
