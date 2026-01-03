@@ -185,13 +185,25 @@ export async function POST(req: NextRequest) {
             // Execute accumulated tool calls when streaming finishes
             if (chunk.choices[0]?.finish_reason === 'tool_calls') {
               console.log('Tool calls complete, executing...');
+              const toolResults: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
+              
               for (const accumulated of Object.values(toolCallAccumulator)) {
-                if (accumulated.name && accumulated.arguments) {
+                if (accumulated.name && accumulated.arguments && accumulated.id) {
                   try {
                     const args = JSON.parse(accumulated.arguments);
-                    console.log(`Executing ${accumulated.name} with args:`, args);
                     
                     if (tools) {
+                      // Ensure fields parameter exists for Sitecore search tools
+                      if (!args.fields && (
+                        accumulated.name === 'sitecore_search_query' ||
+                        accumulated.name === 'sitecore_search_with_facets' ||
+                        accumulated.name === 'sitecore_ai_search'
+                      )) {
+                        args.fields = ['name', 'description'];
+                      }
+                      
+                      console.log(`Executing ${accumulated.name} with args:`, args);
+                      
                       const mcpClient = await getMCPClient();
                       const result = await mcpClient.callTool(accumulated.name, args);
                       console.log(`Result from ${accumulated.name}:`, result);
@@ -214,11 +226,147 @@ export async function POST(req: NextRequest) {
                         },
                       });
                       
+                      // Add tool result to be sent back to model
+                      toolResults.push({
+                        role: 'tool',
+                        tool_call_id: accumulated.id,
+                        content: JSON.stringify(result),
+                      });
+                      
                       console.log(`Tool ${accumulated.name} executed successfully`);
                     }
                   } catch (error) {
                     console.error('MCP tool call error:', error);
-                    // Continue without MCP - don't break the chat
+                    // Add error result
+                    if (accumulated.id) {
+                      toolResults.push({
+                        role: 'tool',
+                        tool_call_id: accumulated.id,
+                        content: JSON.stringify({ error: String(error) }),
+                      });
+                    }
+                  }
+                }
+              }
+              
+              // Call model again with tool results to get synthesis
+              if (toolResults.length > 0) {
+                console.log('Calling model with tool results...');
+                
+                // Build assistant message with tool calls
+                const assistantMessage: OpenAI.Chat.ChatCompletionAssistantMessageParam = {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: Object.values(toolCallAccumulator).map((tc, idx) => ({
+                    id: tc.id!,
+                    type: 'function' as const,
+                    function: {
+                      name: tc.name!,
+                      arguments: tc.arguments,
+                    },
+                  })),
+                };
+                
+                // Create new message array with tool results
+                const messagesWithTools = [
+                  ...messages,
+                  assistantMessage,
+                  ...toolResults,
+                ];
+                
+                // Call model again to synthesize response
+                const synthesisCompletion = await openai.chat.completions.create({
+                  model: 'gpt-4-turbo',
+                  messages: messagesWithTools,
+                  tools,
+                  stream: true,
+                  temperature: 0.7,
+                });
+                
+                // Stream the synthesis response
+                for await (const synthesisChunk of synthesisCompletion) {
+                  const synthesisDelta = synthesisChunk.choices[0]?.delta;
+                  
+                  if (synthesisDelta?.content) {
+                    fullResponse += synthesisDelta.content;
+                    tokenCount++;
+
+                    // Send chunk to client
+                    const data = JSON.stringify({
+                      type: 'content',
+                      content: synthesisDelta.content,
+                    });
+                    controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+                  }
+                  
+                  // Handle finish of synthesis
+                  if (synthesisChunk.choices[0]?.finish_reason === 'stop') {
+                    const latency = Date.now() - startTime;
+
+                    // Save assistant message
+                    await prisma.message.create({
+                      data: {
+                        conversationId: conversation.id,
+                        role: 'assistant',
+                        content: fullResponse,
+                        currentPageId,
+                        tokens: tokenCount,
+                        latencyMs: latency,
+                      },
+                    });
+
+                    // Track token usage
+                    await prisma.analytics.create({
+                      data: {
+                        conversationId: conversation.id,
+                        eventType: 'token_usage',
+                        eventData: {
+                          tokens: tokenCount,
+                          latencyMs: latency,
+                        },
+                      },
+                    });
+
+                    // Generate title after 2nd message
+                    const messageCount = await prisma.message.count({
+                      where: { conversationId: conversation.id },
+                    });
+
+                    if (messageCount === 2 && !conversation.title) {
+                      const title = await generateConversationTitle([
+                        { role: 'user', content: message },
+                        { role: 'assistant', content: fullResponse },
+                      ]);
+
+                      await prisma.conversation.update({
+                        where: { id: conversation.id },
+                        data: { title },
+                      });
+
+                      // Send title update to client
+                      const titleData = JSON.stringify({
+                        type: 'title',
+                        title,
+                      });
+                      controller.enqueue(encoder.encode(`data: ${titleData}\n\n`));
+                    }
+
+                    // Send assistant switch notification if applicable
+                    if (intentResult.shouldSwitch) {
+                      const switchData = JSON.stringify({
+                        type: 'assistant_switch',
+                        newAssistant: intentResult.assistantType,
+                        confidence: intentResult.confidence,
+                      });
+                      controller.enqueue(encoder.encode(`data: ${switchData}\n\n`));
+                    }
+
+                    // Send completion
+                    const doneData = JSON.stringify({
+                      type: 'done',
+                      conversationId: conversation.id,
+                    });
+                    controller.enqueue(encoder.encode(`data: ${doneData}\n\n`));
                   }
                 }
               }

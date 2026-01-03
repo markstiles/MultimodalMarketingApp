@@ -7,6 +7,6 @@
     "start": "npx -y @markstiles/sitecore-search-mcp"
   },
   "dependencies": {
-    "@markstiles/sitecore-search-mcp": "^1.0.1"
+    "@markstiles/sitecore-search-mcp": "^1.0.2"
   }
 }

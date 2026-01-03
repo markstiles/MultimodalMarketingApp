@@ -95,6 +95,7 @@ export class SitecoreSearchMCPClient {
   // Typed helper methods for common operations
 
   async searchContent(params: {
+    fields?: string[];
     domainId?: string;
     rfkId: string;
     keyphrase?: string;
@@ -103,12 +104,14 @@ export class SitecoreSearchMCPClient {
     limit?: number;
   }): Promise<unknown> {
     return this.callTool('sitecore_search_query', {
+      fields: params.fields || ['name', 'description'],
       domainId: params.domainId || process.env.SITECORE_DOMAIN_ID,
       ...params,
     });
   }
 
   async searchWithFacets(params: {
+    fields?: string[];
     domainId?: string;
     rfkId: string;
     keyphrase?: string;
@@ -118,6 +121,7 @@ export class SitecoreSearchMCPClient {
     limit?: number;
   }): Promise<unknown> {
     return this.callTool('sitecore_search_with_facets', {
+      fields: params.fields || ['name', 'description'],
       domainId: params.domainId || process.env.SITECORE_DOMAIN_ID,
       ...params,
     });
@@ -138,6 +142,7 @@ export class SitecoreSearchMCPClient {
   }
 
   async aiSearch(params: {
+    fields?: string[];
     domainId?: string;
     rfkId: string;
     keyphrase: string;
@@ -145,6 +150,7 @@ export class SitecoreSearchMCPClient {
     entity?: string;
   }): Promise<unknown> {
     return this.callTool('sitecore_ai_search', {
+      fields: params.fields || ['name', 'description'],
       domainId: params.domainId || process.env.SITECORE_DOMAIN_ID,
       ...params,
     });

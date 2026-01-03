@@ -10,6 +10,11 @@ export const SITECORE_SEARCH_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
+          fields: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of field names to return in search results (default: ["name", "description"])',
+          },
           domainId: {
             type: 'string',
             description: 'Sitecore domain ID',
@@ -35,7 +40,7 @@ export const SITECORE_SEARCH_TOOLS = [
             description: 'Results per page (default: 24)',
           },
         },
-        required: ['domainId', 'rfkId', 'entity'],
+        required: ['fields', 'domainId', 'rfkId', 'entity'],
       },
     },
   },
@@ -47,6 +52,11 @@ export const SITECORE_SEARCH_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
+          fields: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of field names to return in search results (default: ["name", "description"])',
+          },
           domainId: {
             type: 'string',
             description: 'Sitecore domain ID',
@@ -86,7 +96,7 @@ export const SITECORE_SEARCH_TOOLS = [
             description: 'Sort criteria (e.g., {price: "asc"})',
           },
         },
-        required: ['domainId', 'rfkId'],
+        required: ['fields', 'domainId', 'rfkId'],
       },
     },
   },
@@ -98,6 +108,11 @@ export const SITECORE_SEARCH_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
+          fields: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of field names to return in search results (default: ["name", "description"])',
+          },
           domainId: {
             type: 'string',
             description: 'Sitecore domain ID',
@@ -120,7 +135,7 @@ export const SITECORE_SEARCH_TOOLS = [
             description: 'Entity type to search within',
           },
         },
-        required: ['domainId', 'rfkId', 'keyphrase', 'type'],
+        required: ['fields', 'domainId', 'rfkId', 'keyphrase', 'type'],
       },
     },
   },
