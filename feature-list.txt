@@ -12,3 +12,13 @@
     * session and conversation threads
     * content research 
     * campaign 
+* deploy to vercel and test with vercel postgres
+* improve performance
+* update the user in between tool calls
+* build it into pages 
+* start integrating the context that pages provides
+    * Item ID
+    * Site name
+    * Language
+    * Page route
+    * User info
