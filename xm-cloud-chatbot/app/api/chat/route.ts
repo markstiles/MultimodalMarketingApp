@@ -224,12 +224,40 @@ export async function POST(req: NextRequest) {
                       if (!args.rfkId) {
                         args.rfkId = defaultRfkId;
                       }
-                      if (!args.entity) {
+                      if (!args.entity || args.entity === 'page') {
                         args.entity = 'content';
+                      }
+                      if (!args.page) {
+                        args.page = 1;
+                      }
+                      if (!args.limit) {
+                        args.limit = 10;
+                      }
+                      if (!args.keyphrase) {
+                        args.keyphrase = '*';
+                      }
+
+                      // Apply site filter if siteId is available
+                      if (siteId) {
+                        const siteFilter = {
+                          type: 'eq',
+                          name: 'site',
+                          values: [String(siteId)],
+                        };
+
+                        if (Array.isArray(args.filter)) {
+                          args.filter = [...args.filter, siteFilter];
+                        } else if (Array.isArray(args.filters)) {
+                          args.filters = [...args.filters, siteFilter];
+                        } else {
+                          // Prefer 'filters' key if absent
+                          args.filters = [siteFilter];
+                        }
                       }
                     }
 
-                    console.log(`Executing ${accumulated.name} with args:`, args);
+                    const debugArgs = JSON.stringify(args, null, 2);
+                    console.log(`Executing ${accumulated.name} with args: ${debugArgs}`);
 
                     // Notify client that a tool is running
                     const statusPayload = JSON.stringify({
