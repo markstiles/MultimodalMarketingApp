@@ -206,13 +206,27 @@ export async function POST(req: NextRequest) {
                     
                     if (!tools) continue;
 
-                    // Ensure fields parameter exists for Sitecore search tools
-                    if (!args.fields && (
+                    const defaultDomainId = process.env.SITECORE_DOMAIN_ID || '34706982';
+                    const defaultRfkId = process.env.SITECORE_RFK_ID || 'rfkid_7';
+
+                    // Ensure required fields and defaults for Sitecore search tools
+                    if (
                       accumulated.name === 'sitecore_search_query' ||
                       accumulated.name === 'sitecore_search_with_facets' ||
                       accumulated.name === 'sitecore_ai_search'
-                    )) {
-                      args.fields = ['name', 'description'];
+                    ) {
+                      if (!args.fields) {
+                        args.fields = ['name', 'description'];
+                      }
+                      if (!args.domainId) {
+                        args.domainId = defaultDomainId;
+                      }
+                      if (!args.rfkId) {
+                        args.rfkId = defaultRfkId;
+                      }
+                      if (!args.entity) {
+                        args.entity = 'content';
+                      }
                     }
 
                     console.log(`Executing ${accumulated.name} with args:`, args);

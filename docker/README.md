@@ -1,13 +1,11 @@
-# Docker PostgreSQL Setup
+# Docker Supabase Postgres Setup
 
-This folder contains the Docker configuration for running PostgreSQL locally for development.
+This folder contains the Docker configuration for running Supabase Postgres locally for development.
 
 ## Features
 
-- PostgreSQL 17.4 with SSL enabled
+- Supabase Postgres 15 image with common extensions
 - Persistent data storage
-- Comprehensive logging
-- Query statistics tracking (pg_stat_statements)
 - Automatic restart on failure
 
 ## Initial Setup
@@ -30,26 +28,7 @@ secrets/pg_user.txt     # PostgreSQL username (default: postgres)
 secrets/pg_pw.txt       # PostgreSQL password (change this!)
 ```
 
-### 3. Generate SSL Certificates
-
-Run the PowerShell script to generate self-signed certificates:
-
-```powershell
-cd docker
-.\generate-certs.ps1
-```
-
-Or manually with OpenSSL:
-
-```bash
-cd certs
-openssl genrsa -out server.key 2048
-openssl req -new -key server.key -out server.csr -subj "/C=US/ST=State/L=City/O=Development/CN=localhost"
-openssl x509 -req -days 365 -in server.csr -signkey server.key -out server.crt
-rm server.csr
-```
-
-### 4. Start PostgreSQL
+### 3. Start Supabase Postgres
 
 ```bash
 cd docker
@@ -63,25 +42,25 @@ docker-compose ps
 docker-compose logs -f postgres
 ```
 
-### 5. Update Application Environment
+### 4. Update Application Environment
 
 Update your `.env.local` in the project root:
 
 ```env
-# Local Docker PostgreSQL
-POSTGRES_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?sslmode=require"
-POSTGRES_PRISMA_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?sslmode=require&pgbouncer=true"
-POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?sslmode=require"
+# Local Docker Supabase Postgres
+POSTGRES_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
+POSTGRES_PRISMA_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public&pgbouncer=true"
+POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
 ```
 
 Note: Replace `postgres_dev_password_change_me` with the password you set in `secrets/pg_pw.txt`
 
-### 6. Run Database Migrations
+### 5. Run Database Migrations
 
 From the project root:
 
 ```bash
-npx prisma migrate dev --name init
+npm run db:setup
 ```
 
 ## Daily Usage
@@ -102,11 +81,7 @@ docker-compose down
 ### View Logs
 
 ```bash
-# Follow logs
 docker-compose logs -f postgres
-
-# View log files directly
-cat logs/postgresql.log
 ```
 
 ### Connect to Database
@@ -121,7 +96,6 @@ docker exec -it postgres psql -U postgres
 # Database: postgres
 # Username: (from secrets/pg_user.txt)
 # Password: (from secrets/pg_pw.txt)
-# SSL: Required
 ```
 
 ### Reset Database (Delete All Data)
@@ -132,7 +106,7 @@ docker exec -it postgres psql -U postgres
 docker-compose down
 rm -rf data/*
 docker-compose up -d
-npx prisma migrate dev
+npm run db:setup
 ```
 
 ## Troubleshooting
@@ -173,51 +147,22 @@ On Windows: The container will set permissions automatically.
 ```
 docker/
 ├── docker-compose.yml       # Docker Compose configuration
-├── generate-certs.ps1       # SSL certificate generation script
 ├── README.md                # This file
 ├── .gitignore               # Git ignore rules
 ├── data/                    # PostgreSQL data files (ignored by git)
-├── logs/                    # PostgreSQL logs (ignored by git)
-├── certs/                   # SSL certificates (ignored by git)
-│   ├── server.crt
-│   └── server.key
-└── secrets/                 # Database credentials (ignored by git)
-    ├── pg_user.txt
-    └── pg_pw.txt
+├── secrets/                 # Database credentials (ignored by git)
+│   ├── pg_user.txt
+│   └── pg_pw.txt
+└── logs/                    # (optional) bind mount if you add logging
 ```
 
 ## Configuration Details
 
-### Network Mode: Host
+### Notes
 
-The container uses `network_mode: "host"` which means it binds directly to localhost:5432. This simplifies local development but is NOT recommended for production.
-
-### Logging
-
-All queries, connections, and disconnections are logged to:
-- Console: `docker-compose logs`
-- Files: `logs/postgresql.log` and `logs/postgresql.csv`
-
-Logs rotate daily automatically.
-
-### Statistics
-
-Query statistics are tracked via `pg_stat_statements`. To view:
-
-```sql
--- Connect to database
-docker exec -it postgres psql -U postgres
-
--- Enable extension
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-
--- View query statistics
-SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
-```
-
-## Production Notes
-
-For production deployment:
+- Supabase Postgres runs on `localhost:5432` by default in this setup.
+- Keep `secrets/pg_user.txt` and `secrets/pg_pw.txt` in sync with your `.env` connection strings.
+- For custom logging, you can mount a `./logs` directory and add logging flags to `command` in `docker-compose.yml`.
 
 1. Use a managed PostgreSQL service (Vercel Postgres, AWS RDS, etc.)
 2. Change from `network_mode: host` to proper networking

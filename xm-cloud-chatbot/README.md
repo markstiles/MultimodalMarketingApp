@@ -34,11 +34,13 @@ npm install
 
 ### 2. Configure Environment Variables
 
-Copy `.env.example` to `.env` and fill in your credentials:
+Copy `.env.example` to `.env` and fill in your credentials. For local Supabase Postgres (via `docker/docker-compose.yml`):
 
 ```env
-# Database (Vercel Postgres)
-POSTGRES_URL="your-postgres-connection-string"
+POSTGRES_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
+POSTGRES_PRISMA_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public&pgbouncer=true"
+POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
+DATABASE_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
 
 # OpenAI
 OPENAI_API_KEY="sk-..."
@@ -52,14 +54,17 @@ SITECORE_CLIENT_KEY="123456789-12345678"
 SITECORE_API_KEY="01-xxxxxxxx..."
 ```
 
-### 3. Set up Database
+### 3. Start Supabase Postgres (optional local dev)
 
 ```bash
-# Generate Prisma Client
-npx prisma generate
+cd ../docker
+docker-compose up -d
+```
 
-# Run migrations (requires database connection)
-npx prisma migrate dev --name init
+### 4. Set up Database
+
+```bash
+npm run db:setup
 ```
 
 ### 4. Deploy MCP Server to Railway
