@@ -21,9 +21,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[80%] rounded-lg p-3 ${
+        className={`${isUser ? 'max-w-[80%]' : 'w-full'} rounded-lg p-3 ${
           isUser
-            ? 'bg-blue-600 text-white'
+            ? 'bg-[#dddddd] text-black border border-gray-300'
             : 'bg-white text-gray-900 border border-gray-200'
         }`}
       >
@@ -44,29 +44,37 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                 {children}
               </code>
             ),
+            img: () => null,
           }}
         >
           {message.content}
         </ReactMarkdown>
         {message.images && message.images.length > 0 && (
-          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">
             {message.images.map((url, idx) => (
-              <div key={idx} className="relative w-full overflow-hidden rounded-md border border-gray-200 bg-gray-50">
+              <a
+                key={idx}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="block relative w-full overflow-hidden rounded-md border border-gray-200 bg-gray-50"
+              >
                 <Image
                   src={url}
                   alt={`Generated image ${idx + 1}`}
-                  width={1024}
-                  height={1024}
+                  width={512}
+                  height={512}
                   className="h-auto w-full object-cover"
+                  sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
                 />
-              </div>
+              </a>
             ))}
           </div>
         )}
         {message.timestamp && (
           <div
             className={`text-xs mt-1 ${
-              isUser ? 'text-blue-100' : 'text-gray-500'
+              isUser ? 'text-[#444444]' : 'text-gray-500'
             }`}
           >
             {message.timestamp.toLocaleTimeString([], {

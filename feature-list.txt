@@ -1,24 +1,40 @@
 
-* audio interface
-* convert content to audio (blogcast)
-* integrate marketing mcp 
-* create pages from generated content
-* polish up the UI 
-* allow audience to try it out
-* build better test content to analyze (import from somewhere)
-* create content data for site-specific brand voice
-* make models easy to change out
+& UI
+    * audio interface
+    * polish up the UI to be less web 2.0 
+* tooling
+    * when images are generated, they show up and then more binary text continues to be added until something else finishes
+    * the images do not show up after you leave and return to the conversation
+    * do we have a duplicate mcp tool message generator. there's a tools list which should be queried from the mcp server and only have a pass-through allowed tools we can manage
+    * improve performance on responses (what's the bottleneck)
+    * integrate marketing mcp 
+    * create pages from generated content
+    * build app in pages 
+    * start integrating the context that pages provides
+        * Item ID
+        * Site name
+        * Language
+        * Page route
+        * User info
+    * allow audience to try it out
+    * users can choose, view or improve images
+    * make models easy to change out
+    * convert content to audio (blogcast)
+* content 
+    * is the content good enough on clarity or should we use velir.com 
+    * create content in sitecore for site-specific brand voice
+    * put the task prompts into content
 * testing
     * session and conversation threads
-    * content research 
-    * campaign 
-* deploy to vercel and test with vercel postgres
-* improve performance
-* update the user in between tool calls
-* build it into pages 
-* start integrating the context that pages provides
-    * Item ID
-    * Site name
-    * Language
-    * Page route
-    * User info
+    * content research
+    * building a page
+    * create an image then update it 
+    * click on generated images 
+    * delete a conversation 
+    * test multiple users and validate they have different sessions
+    * test in pages 
+* analytics 
+    * can we draw in any data to help decision making
+* deploy
+    * change prisma postgres to supabase postgres
+    * how/where to deploy on vercel

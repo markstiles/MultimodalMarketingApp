@@ -150,6 +150,12 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                     );
                     break;
 
+                  case 'status':
+                    if (data.message) {
+                      toast(data.message, { icon: '🤖', duration: 2000 });
+                    }
+                    break;
+
                   case 'done':
                     setConversationId(data.conversationId);
                     break;

@@ -126,6 +126,7 @@ export async function POST(req: NextRequest) {
     let fullResponse = '';
     let tokenCount = 0;
     const mcpCalls: Array<{ tool: string; args: unknown; result: unknown }> = [];
+    let appendedArtifacts: string[] = [];
 
     // Get Sitecore Search tools (optional - gracefully handle if MCP not available)
     let tools: ReturnType<typeof getAllTools> | undefined;
@@ -153,6 +154,17 @@ export async function POST(req: NextRequest) {
           
           // Accumulate tool calls across chunks
           const toolCallAccumulator: Record<number, { id?: string; name?: string; arguments: string }> = {};
+
+          const TOOL_STATUS_LABELS: Record<string, string> = {
+            generate_image: 'Generating an image... ',
+            sitecore_search_query: 'Searching content...',
+            sitecore_search_with_facets: 'Running faceted search...',
+            sitecore_ai_search: 'Running AI search...',
+            sitecore_get_recommendations: 'Fetching recommendations...',
+            sitecore_create_document: 'Creating document...',
+            sitecore_update_document: 'Updating document...',
+            sitecore_track_event: 'Tracking event...',
+          };
           
           for await (const chunk of completion) {
             //console.log('Received chunk:', chunk);
@@ -205,6 +217,13 @@ export async function POST(req: NextRequest) {
 
                     console.log(`Executing ${accumulated.name} with args:`, args);
 
+                    // Notify client that a tool is running
+                    const statusPayload = JSON.stringify({
+                      type: 'status',
+                      message: TOOL_STATUS_LABELS[accumulated.name] || 'Running a tool...'
+                    });
+                    controller.enqueue(encoder.encode(`data: ${statusPayload}\n\n`));
+
                     // Handle image generation locally via OpenAI images API
                     if (accumulated.name === 'generate_image') {
                       const imageResult = await openai.images.generate({
@@ -218,6 +237,17 @@ export async function POST(req: NextRequest) {
                       const urls = (imageResult.data ?? [])
                         .map((d) => d.url)
                         .filter((u): u is string => Boolean(u));
+
+                      const imageMarkdown = urls
+                        .map((u, idx) => `- [Image ${idx + 1}](${u})`)
+                        .join('\n');
+                      if (imageMarkdown) {
+                        const artifact = `Generated images:\n${imageMarkdown}`;
+                        appendedArtifacts.push(artifact);
+                        fullResponse += (fullResponse ? '\n\n' : '') + artifact;
+                        const artifactData = JSON.stringify({ type: 'content', content: `\n\n${artifact}` });
+                        controller.enqueue(encoder.encode(`data: ${artifactData}\n\n`));
+                      }
 
                       // Emit SSE event to client with image URLs
                       const imagePayload = JSON.stringify({
@@ -351,6 +381,11 @@ export async function POST(req: NextRequest) {
                   // Handle finish of synthesis
                   if (synthesisChunk.choices[0]?.finish_reason === 'stop') {
                     const latency = Date.now() - startTime;
+
+                    if (appendedArtifacts.length > 0) {
+                      const artifactsText = appendedArtifacts.join('\n\n');
+                      fullResponse += fullResponse ? `\n\n${artifactsText}` : artifactsText;
+                    }
 
                     // Save assistant message
                     await prisma.message.create({
@@ -572,6 +607,48 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ conversations });
   } catch (error) {
     console.error('Get conversations error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+// Delete a conversation
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const conversationId = searchParams.get('conversationId');
+    const userId = searchParams.get('userId');
+    const siteId = searchParams.get('siteId');
+
+    if (!conversationId) {
+      return NextResponse.json(
+        { error: 'Missing conversationId' },
+        { status: 400 }
+      );
+    }
+
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        ...(userId ? { userId } : {}),
+        ...(siteId ? { siteId } : {}),
+      },
+    });
+
+    if (!conversation) {
+      return NextResponse.json(
+        { error: 'Conversation not found' },
+        { status: 404 }
+      );
+    }
+
+    await prisma.conversation.delete({ where: { id: conversationId } });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Delete conversation error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

@@ -29,6 +29,7 @@ export default function ConversationHistory({
 }: ConversationHistoryProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     loadConversations();
@@ -43,6 +44,27 @@ export default function ConversationHistory({
       console.error('Error loading conversations:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async (conversationId: string) => {
+    if (isDeleting) return;
+    setIsDeleting(conversationId);
+
+    try {
+      await fetch(`/api/chat?conversationId=${conversationId}&userId=${userId}&siteId=${siteId}`, {
+        method: 'DELETE',
+      });
+
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+
+      if (currentConversationId === conversationId) {
+        onNewConversation();
+      }
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+    } finally {
+      setIsDeleting(null);
     }
   };
 
@@ -97,23 +119,48 @@ export default function ConversationHistory({
         ) : (
           <div className="divide-y divide-gray-200">
             {conversations.map((conv) => (
-              <button
+              <div
                 key={conv.id}
-                onClick={() => onSelectConversation(conv.id)}
-                className={`w-full p-3 text-left hover:bg-gray-100 transition-colors ${
+                className={`w-full text-left hover:bg-gray-100 transition-colors flex items-stretch justify-between ${
                   currentConversationId === conv.id ? 'bg-blue-50 border-l-4 border-blue-600' : ''
                 }`}
               >
-                <div className="font-medium text-sm text-gray-900 truncate">
-                  {conv.title || 'Untitled Conversation'}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {formatDate(conv.updatedAt)}
-                </div>
-                <div className="text-xs text-gray-400 mt-1 capitalize">
-                  {conv.assistantType.replace('_', ' ')}
-                </div>
-              </button>
+                <button
+                  onClick={() => onSelectConversation(conv.id)}
+                  className="relative w-4/5 text-left p-3 overflow-hidden"
+                >
+                  <div
+                    className="font-medium text-sm text-gray-900 truncate"
+                    title={conv.title || 'Untitled Conversation'}
+                  >
+                    {conv.title || 'Untitled Conversation'}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {formatDate(conv.updatedAt)}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1 capitalize truncate">
+                    {conv.assistantType.replace('_', ' ')}
+                  </div>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white via-white/70 to-transparent" />
+                </button>
+                <button
+                  onClick={() => handleDelete(conv.id)}
+                  className="w-12 flex items-center justify-center border-l border-gray-200 text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  title="Delete conversation"
+                  disabled={isDeleting === conv.id}
+                >
+                  {isDeleting === conv.id ? (
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V5a1 1 0 00-1-1h-4a1 1 0 00-1 1v2M4 7h16" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             ))}
           </div>
         )}
