@@ -127,6 +127,7 @@ export async function POST(req: NextRequest) {
     let tokenCount = 0;
     const mcpCalls: Array<{ tool: string; args: unknown; result: unknown }> = [];
     let appendedArtifacts: string[] = [];
+    let imageUrls: string[] = [];
 
     // Get Sitecore Search tools (optional - gracefully handle if MCP not available)
     let tools: ReturnType<typeof getAllTools> | undefined;
@@ -280,16 +281,8 @@ export async function POST(req: NextRequest) {
                         .map((d) => d.url)
                         .filter((u): u is string => Boolean(u));
 
-                      const imageMarkdown = urls
-                        .map((u, idx) => `- [Image ${idx + 1}](${u})`)
-                        .join('\n');
-                      if (imageMarkdown) {
-                        const artifact = `Generated images:\n${imageMarkdown}`;
-                        appendedArtifacts.push(artifact);
-                        fullResponse += (fullResponse ? '\n\n' : '') + artifact;
-                        const artifactData = JSON.stringify({ type: 'content', content: `\n\n${artifact}` });
-                        controller.enqueue(encoder.encode(`data: ${artifactData}\n\n`));
-                      }
+                      // Store image URLs for database persistence
+                      imageUrls.push(...urls);
 
                       // Emit SSE event to client with image URLs
                       const imagePayload = JSON.stringify({

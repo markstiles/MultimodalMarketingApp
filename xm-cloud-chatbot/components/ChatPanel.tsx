@@ -195,9 +195,10 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         setConversationTitle(data.conversation.title);
         setAssistantType(data.conversation.assistantType);
         setMessages(
-          data.conversation.messages.map((m: { role: string; content: string; timestamp: string }) => ({
+          data.conversation.messages.map((m: { role: string; content: string; timestamp: string; images?: string[] }) => ({
             role: m.role,
             content: m.content,
+            images: m.images || [],
             timestamp: new Date(m.timestamp),
           }))
         );

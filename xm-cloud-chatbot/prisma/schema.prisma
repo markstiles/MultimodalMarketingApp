@@ -32,6 +32,7 @@ model Message {
   conversationId String
   role           String   // user, assistant, system
   content        String   @db.Text
+  images         String[] // Array of image URLs (for generated images)
   currentPageId  String?  // Page context when message was sent
   tokens         Int?     // Token count for this message
   mcpCalls       Json?    // Array of MCP tool calls made
