@@ -25,6 +25,7 @@
     * create content in sitecore for site-specific brand voice
     * put the task prompts into content
 * testing
+    * add ML Flow to track and automate prompt testing
     * session and conversation threads
     * content research
     * building a page
