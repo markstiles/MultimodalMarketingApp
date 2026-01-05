@@ -12,6 +12,15 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Helper function to clean up incomplete markdown image syntax
+function cleanIncompleteMarkdown(text: string): string {
+  // Remove incomplete markdown image syntax like "![alt](" or "![alt text]("
+  return text
+    .replace(/!\[[^\]]*\]\(\s*$/g, '') // Remove incomplete ![alt](
+    .replace(/!\[[^\]]*$/g, '')          // Remove incomplete ![alt
+    .trim();
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -126,7 +135,6 @@ export async function POST(req: NextRequest) {
     let fullResponse = '';
     let tokenCount = 0;
     const mcpCalls: Array<{ tool: string; args: unknown; result: unknown }> = [];
-    let appendedArtifacts: string[] = [];
     let imageUrls: string[] = [];
 
     // Get Sitecore Search tools (optional - gracefully handle if MCP not available)
@@ -417,17 +425,16 @@ export async function POST(req: NextRequest) {
                   if (synthesisChunk.choices[0]?.finish_reason === 'stop') {
                     const latency = Date.now() - startTime;
 
-                    if (appendedArtifacts.length > 0) {
-                      const artifactsText = appendedArtifacts.join('\n\n');
-                      fullResponse += fullResponse ? `\n\n${artifactsText}` : artifactsText;
-                    }
+                    // Clean up any incomplete markdown before saving
+                    const cleanedResponse = cleanIncompleteMarkdown(fullResponse);
 
                     // Save assistant message
                     await prisma.message.create({
                       data: {
                         conversationId: conversation.id,
                         role: 'assistant',
-                        content: fullResponse,
+                        content: cleanedResponse,
+                        images: imageUrls,
                         currentPageId,
                         tokens: tokenCount,
                         latencyMs: latency,
@@ -454,7 +461,7 @@ export async function POST(req: NextRequest) {
                     if (messageCount === 2 && !conversation.title) {
                       const title = await generateConversationTitle([
                         { role: 'user', content: message },
-                        { role: 'assistant', content: fullResponse },
+                        { role: 'assistant', content: cleanedResponse },
                       ]);
 
                       await prisma.conversation.update({
@@ -508,12 +515,16 @@ export async function POST(req: NextRequest) {
             if (chunk.choices[0]?.finish_reason === 'stop') {
               const latency = Date.now() - startTime;
 
+              // Clean up any incomplete markdown before saving
+              const cleanedResponse = cleanIncompleteMarkdown(fullResponse);
+
               // Save assistant message
               await prisma.message.create({
                 data: {
                   conversationId: conversation.id,
                   role: 'assistant',
-                  content: fullResponse,
+                  content: cleanedResponse,
+                  images: imageUrls,
                   currentPageId,
                   tokens: tokenCount,
                   //mcpCalls: mcpCalls,
@@ -541,7 +552,7 @@ export async function POST(req: NextRequest) {
               if (messageCount === 2 && !conversation.title) {
                 const title = await generateConversationTitle([
                   { role: 'user', content: message },
-                  { role: 'assistant', content: fullResponse },
+                  { role: 'assistant', content: cleanedResponse },
                 ]);
 
                 await prisma.conversation.update({

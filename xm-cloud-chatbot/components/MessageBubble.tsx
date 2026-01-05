@@ -15,8 +15,19 @@ interface MessageBubbleProps {
   message: Message;
 }
 
+// Filter out metadata that shouldn't be displayed to users
+function filterDisplayContent(content: string): string {
+  return content
+    .replace(/^Generated images?:\s*$/gim, '')           // "Generated images:"
+    .replace(/^Image \d+\s*$/gim, '')                   // "Image 1", "Image 2"
+    .replace(/^-?\s*\[Image \d+\]\([^)]*\)\s*$/gim, '') // "- [Image 1](url)"
+    .replace(/^\s*\n\s*\n/gm, '\n')                     // Clean up extra blank lines
+    .trim();
+}
+
 export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const displayContent = filterDisplayContent(message.content);
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -47,7 +58,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             img: () => null,
           }}
         >
-          {message.content}
+          {displayContent}
         </ReactMarkdown>
         {message.images && message.images.length > 0 && (
           <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2">

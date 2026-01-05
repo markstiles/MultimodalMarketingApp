@@ -45,6 +45,8 @@ const IMAGE_GENERATION_INSTRUCTIONS = `
 Image generation:
 - If the user asks for an image/visual/hero/banner/illustration, call the function tool generate_image with a concise, descriptive prompt.
 - Include subject, setting, mood, and lighting in the prompt; use 1024x1024 unless the user specifies otherwise.
+- IMPORTANT: Do NOT include metadata like "Generated images:", "Image 1", or markdown image syntax in your response. The images will be displayed automatically.
+- Simply describe what you're generating in natural language, then call the tool. The system will handle displaying the images.
 
 ## Image Generation Instructions
 

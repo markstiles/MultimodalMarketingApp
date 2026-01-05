@@ -20,6 +20,16 @@ interface ChatPanelProps {
   onSendToEditor: (message: unknown) => void;
 }
 
+// Filter out markdown image syntax since images are displayed separately
+function filterStreamContent(content: string): string {
+  return content
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '') // Remove complete markdown images ![alt](url)
+    .replace(/!\[([^\]]*)\]\([^)]*$/g, '')  // Remove incomplete markdown images ![alt](url...
+    .replace(/!\[([^\]]*)\]$/g, '')          // Remove incomplete markdown images ![alt]
+    .replace(/!\[[^\]]*$/g, '')              // Remove incomplete markdown images ![alt...
+    .trim();
+}
+
 export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -91,6 +101,7 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                 switch (data.type) {
                   case 'content':
                     assistantMessage += data.content;
+                    const filteredContent = filterStreamContent(assistantMessage);
                     setMessages((prev) => {
                       const newMessages = [...prev];
                       const lastMessage = newMessages[newMessages.length - 1];
@@ -98,12 +109,12 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                       if (lastMessage?.role === 'assistant') {
                         newMessages[newMessages.length - 1] = {
                           ...lastMessage,
-                          content: assistantMessage,
+                          content: filteredContent,
                         };
                       } else {
                         newMessages.push({
                           role: 'assistant',
-                          content: assistantMessage,
+                          content: filteredContent,
                           timestamp: new Date(),
                         });
                       }
