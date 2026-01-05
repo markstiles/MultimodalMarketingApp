@@ -48,7 +48,9 @@ Image generation:
 
 ## Image Generation Instructions
 
-When the user requests an image, generate it supports three output resolutions:
+### gpt-image-1 settings
+
+When the user requests an image, generate gpt-image-1 supports three output resolutions:
 
 - size value: 1024x1024, description: square
 - size value: 1024x1536, description: portrait
@@ -60,11 +62,20 @@ They can all be set to use different quality tiers. The values for the gpt-image
 - Medium
 - High
 
+### dall-e-3 settings
+
+When the user requests an image, dall-e-3 supports two output resolutions:
+
+- 1024x1024, description: square
+- 1024x1792, description: portrait
+- 1792x1024, description: landscape
+
 The values for the dall-e-3 tiers are:
 
 - Standard
 - HD
 
+## default settings
 If the user doesn't specify a resolution, ask which option and/or quality tier they want.
 `;
 
