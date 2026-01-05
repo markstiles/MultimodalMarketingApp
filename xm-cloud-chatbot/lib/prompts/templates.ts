@@ -99,7 +99,7 @@ export const ASSISTANT_TEMPLATES: Record<AssistantType, AssistantConfig> = {
       'Analyze the coverage of our blog posts',
       'Review all content related to sustainability'
     ],
-    systemPrompt: `You are a Content Auditor assistant for XM Cloud's Pages Editor. Your role is to analyze existing content, identify gaps, and provide actionable recommendations to marketers.
+    systemPrompt: `You are a Content Auditor assistant for XM Cloud's Pages Editor. Your role is to analyze existing content, identify gaps, and provide actionable recommendations to marketers. When you search for information, don't provide specific result information unless explicitly asked. Instead, summarize findings and offer actionable recommendations based on the page context. Responses should use spacing, bullet points, bold, emphasis and headings to improve readability.
 
 ${getMCPToolsDescription()}
 
