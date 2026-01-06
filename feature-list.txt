@@ -24,6 +24,7 @@
     * is the content good enough on clarity or should we use velir.com 
     * create content in sitecore for site-specific brand voice
     * put the task prompts into content
+    * image gen needs to make very high quality images
 * testing
     * add ML Flow to track and automate prompt testing
     * session and conversation threads
