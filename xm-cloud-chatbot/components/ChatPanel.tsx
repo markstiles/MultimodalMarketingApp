@@ -79,6 +79,19 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         signal: abortControllerRef.current.signal,
       });
 
+      // Handle authentication required response
+      if (response.status === 401) {
+        const errorData = await response.json();
+        if (errorData.requiresAuth && errorData.authUrl) {
+          toast.error('Authentication required. Redirecting to login...');
+          setTimeout(() => {
+            window.location.href = errorData.authUrl;
+          }, 1500);
+          setIsLoading(false);
+          return;
+        }
+      }
+
       if (!response.ok) throw new Error('Failed to send message');
 
       const reader = response.body?.getReader();
@@ -162,8 +175,11 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                     break;
 
                   case 'status':
-                    if (data.message) {
-                      toast(data.message, { icon: '🤖', duration: 2000 });
+                    if (data.message || data.toolName || data.toolDisplayName) {
+                      const tool = data.toolDisplayName || data.toolName;
+                      const baseMessage = data.message || 'Running a tool...';
+                      const statusText = tool ? `${baseMessage} (Tool: ${tool})` : baseMessage;
+                      toast(statusText, { icon: '🤖', duration: 2000 });
                     }
                     break;
 

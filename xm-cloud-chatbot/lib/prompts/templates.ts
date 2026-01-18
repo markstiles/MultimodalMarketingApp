@@ -5,7 +5,9 @@ function getMCPToolsDescription() {
   const domainId = process.env.SITECORE_DOMAIN_ID || '34706982';
   
   return `
-Available Sitecore Search MCP Tools:
+Available MCP Tools:
+
+## Sitecore Search MCP Tools
 
 IMPORTANT: When using these tools, use rfkId: "${rfkId}" and domainId: "${domainId}" as defaults.
 
@@ -29,6 +31,46 @@ IMPORTANT: When using these tools, use rfkId: "${rfkId}" and domainId: "${domain
 
 7. sitecore_track_event - Track visitor events for analytics
    - Parameters: domainId, customerKey, eventType, value, context
+
+## Sitecore Marketer MCP Tools
+
+These tools allow you to interact with XM Cloud Pages Editor content:
+
+1. mcp_marketer-mcp_list_sites - List all sites with name and target hostname
+   - No parameters required
+
+2. mcp_marketer-mcp_get_site_information - Get site information by site ID
+   - Parameters: siteId (required)
+
+3. mcp_marketer-mcp_get_all_pages_by_site - Get all pages for a site
+   - Parameters: siteName (required), language (optional, default: "en")
+
+4. mcp_marketer-mcp_search_site - Search site pages by title
+   - Parameters: site_name (required), search_query (required), language (optional)
+
+5. mcp_marketer-mcp_get_site_id_from_item - Get site ID from item ID
+   - Parameters: itemId (required)
+
+6. mcp_marketer-mcp_list_components - List all components for a site
+   - Parameters: site_name (required)
+
+7. mcp_marketer-mcp_get_component - Get component details including datasource requirements
+   - Parameters: component_id (required)
+
+8. mcp_marketer-mcp_get_components_on_page - Get all components on a page
+   - Parameters: pageId (required), language (optional), version (optional)
+
+9. mcp_marketer-mcp_get_allowed_components_by_placeholder - Get allowed components by placeholder
+   - Parameters: pageId (required), placeholderName (required), language (optional)
+
+10. mcp_marketer-mcp_get_components_by_placeholder - Get components available for a placeholder
+    - Parameters: placeholder_id (required)
+
+USE THESE TOOLS when you need to:
+- List or find sites managed in XM Cloud
+- Look up pages, their structure, or content
+- Understand what components are available or on a page
+- Get information about component datasource requirements
 `;
 }
 

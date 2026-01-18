@@ -1,5 +1,10 @@
 
-& UI
+* less about generating content and more about checking content or setting metadata
+    * how to find images and 
+    * what the process could look like
+    * automate scaffolding pages and structure
+    *  
+* UI
     * audio interface
     * polish up the UI to be less web 2.0 
 * tooling

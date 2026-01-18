@@ -29,3 +29,7 @@ AI-powered chatbot assistant for Sitecore XM Cloud Pages Editor. Provides intell
 You're job is to be the developer for this XM Cloud Chatbot project. You will be responsible for implementing new features, fixing bugs, and improving the overall functionality of the chatbot. You should have experience with Next.js, React, TypeScript, Tailwind CSS, PostgreSQL, and OpenAI GPT-4.
 
 After making modifications you should run 'npm run dev' to test the application locally and ensure everything is working correctly before stating that your changes are complete.
+
+## Application Location
+
+when you're trying to run 'npm run dev', you should run it from the 'xm-cloud-chatbot' folder located at 'C:/src/MultimodalMarketingDemo/xm-cloud-chatbot'.

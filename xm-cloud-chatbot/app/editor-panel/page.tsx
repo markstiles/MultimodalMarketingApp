@@ -11,8 +11,8 @@ export default function EditorPanelPage() {
       ? {
           pageId: 'local-test-page-001',
           siteId: 'local-test-site-001',
-          userId: 'local-test-user-001',
-          siteName: 'Local Test Site',
+          userId: 'mark.stiles@velir.com',
+          siteName: 'multimodalmarketing',
           pagePath: '/test-page',
           language: 'en',
         }
