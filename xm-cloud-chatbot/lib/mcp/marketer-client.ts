@@ -18,8 +18,54 @@ export class MarketerMCPClient {
   private userId: string;
   private accessToken: string | null = null;
 
+  private debugEnabled: boolean =
+    process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1';
+
   constructor(userId: string) {
     this.userId = userId;
+  }
+
+  private redactHeaders(headers: Headers): Record<string, string> {
+    const entries = Object.fromEntries(headers.entries());
+    for (const key of Object.keys(entries)) {
+      const lower = key.toLowerCase();
+      if (lower === 'authorization' || lower === 'cookie' || lower === 'set-cookie') {
+        entries[key] = '[redacted]';
+      }
+    }
+    return entries;
+  }
+
+  private safeJson(value: unknown, maxLen = 8000): string {
+    try {
+      const seen = new WeakSet<object>();
+      const json = JSON.stringify(
+        value,
+        (_key, val) => {
+          if (typeof val === 'string') {
+            return val.length > 2000 ? `${val.slice(0, 2000)}…[truncated ${val.length}]` : val;
+          }
+          if (typeof val === 'object' && val !== null) {
+            if (seen.has(val as object)) return '[circular]';
+            seen.add(val as object);
+          }
+          return val;
+        },
+        2
+      );
+      return json.length > maxLen ? `${json.slice(0, maxLen)}…[truncated ${json.length}]` : json;
+    } catch {
+      return '[unserializable]';
+    }
+  }
+
+  private debugLog(message: string, details?: unknown): void {
+    if (!this.debugEnabled) return;
+    if (details !== undefined) {
+      console.log(message, details);
+    } else {
+      console.log(message);
+    }
   }
 
   private normalizeUrl(value: unknown): string | null {
@@ -198,42 +244,126 @@ export class MarketerMCPClient {
       // This transport tolerates GET 405 (no dedicated SSE stream endpoint) and will still work via POST.
       const mcpUrl = process.env.MARKETER_MCP_URL || 'https://edge-platform.sitecorecloud.io/mcp/marketer-mcp-prod';
       console.log('[Marketer MCP] Connecting to:', mcpUrl);
-      
-      // First, test direct fetch to verify token works
-      try {
-        console.log('[Marketer MCP] Testing direct fetch with token...');
-        const testResponse = await fetch(mcpUrl, {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Accept': 'text/event-stream',
-          },
-        });
-        console.log('[Marketer MCP] Test fetch status:', testResponse.status);
-        console.log('[Marketer MCP] Test fetch headers:', Object.fromEntries(testResponse.headers.entries()));
-        if (testResponse.status === 405) {
-          console.log('[Marketer MCP] Test fetch returned 405 (expected for Streamable HTTP GET); continuing.');
-        } else if (!testResponse.ok) {
-          const errorText = await testResponse.text();
-          console.error('[Marketer MCP] Test fetch error body:', errorText);
-        }
-      } catch (testError) {
-        console.error('[Marketer MCP] Test fetch failed:', testError);
-      }
+
+      // Note: Streamable HTTP uses an optional GET (SSE) channel for server->client messages.
+      // The Sitecore endpoint may return 405 for that GET, which is expected and handled by the SDK.
       
       // Create Streamable HTTP transport with custom fetch that includes auth headers
       this.transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
         fetch: async (url: string | URL | Request, init?: RequestInit) => {
-          console.log('[Marketer MCP] Custom fetch called for:', url);
+          const requestId = Math.random().toString(16).slice(2);
+          const method = init?.method || 'GET';
           const headers = new Headers(init?.headers);
           if (!headers.has('Authorization')) {
             headers.set('Authorization', `Bearer ${this.accessToken}`);
           }
-          console.log('[Marketer MCP] Custom fetch headers:', Object.fromEntries(headers.entries()));
 
-          return fetch(url, {
+          const redactedHeaders = this.redactHeaders(headers);
+
+          let bodyPreview: string | undefined;
+          const body = init?.body as unknown;
+          if (typeof body === 'string') {
+            // Often JSON-RPC payload for tool calls
+            bodyPreview = body.length > 8000 ? `${body.slice(0, 8000)}…[truncated ${body.length}]` : body;
+          } else if (body instanceof Uint8Array) {
+            bodyPreview = `[Uint8Array length=${body.length}]`;
+          } else if (body && typeof body === 'object') {
+            bodyPreview = `[body type=${(body as any).constructor?.name || 'object'}]`;
+          }
+
+          this.debugLog('[Marketer MCP] HTTP request', {
+            requestId,
+            method,
+            url: String(url),
+            headers: redactedHeaders,
+            bodyPreview,
+          });
+
+          const start = Date.now();
+          const response = await fetch(url, {
             ...init,
             headers,
           });
+
+          const durationMs = Date.now() - start;
+          const contentType = response.headers.get('content-type') || '';
+
+          // Streamable HTTP spec allows servers to not support the optional SSE GET endpoint.
+          // The MCP SDK treats GET 405 as an expected/handled case; avoid noisy logs and avoid
+          // cloning/reading the body here to prevent any interaction with response cancellation.
+          if (method === 'GET' && response.status === 405 && (headers.get('Accept') || '').includes('text/event-stream')) {
+            this.debugLog('[Marketer MCP] SSE GET not supported (405); continuing.');
+            return response;
+          }
+
+          if (response.status >= 400) {
+            // Always emit error diagnostics (safe/redacted), even if debug is off.
+            let responseBodyPreview: string | undefined;
+            if (!contentType.includes('text/event-stream')) {
+              try {
+                const cloned = response.clone();
+                const text = await cloned.text();
+                responseBodyPreview = text.length > 4000 ? `${text.slice(0, 4000)}…[truncated ${text.length}]` : text;
+              } catch {
+                // ignore
+              }
+            }
+
+            console.warn('[Marketer MCP] HTTP error', {
+              requestId,
+              method,
+              url: String(url),
+              status: response.status,
+              durationMs,
+              contentType,
+              requestHeaders: redactedHeaders,
+              requestBodyPreview: bodyPreview,
+              responseBodyPreview,
+            });
+          }
+
+          // For non-stream responses, include a small preview of body to help debug.
+          if (this.debugEnabled && !contentType.includes('text/event-stream')) {
+            try {
+              const cloned = response.clone();
+              const text = await cloned.text();
+              const textPreview = text.length > 4000 ? `${text.slice(0, 4000)}…[truncated ${text.length}]` : text;
+              this.debugLog('[Marketer MCP] HTTP response', {
+                requestId,
+                status: response.status,
+                durationMs,
+                contentType,
+                bodyPreview: textPreview,
+              });
+            } catch (e) {
+              this.debugLog('[Marketer MCP] HTTP response (preview failed)', {
+                requestId,
+                status: response.status,
+                durationMs,
+                contentType,
+                error: String(e),
+              });
+            }
+          } else {
+            this.debugLog('[Marketer MCP] HTTP response', {
+              requestId,
+              status: response.status,
+              durationMs,
+              contentType,
+            });
+          }
+
+          // If this looks like JSON-RPC, attempt to parse and log a structured view
+          if (this.debugEnabled && typeof body === 'string' && body.trim().startsWith('{')) {
+            try {
+              const parsed = JSON.parse(body);
+              this.debugLog('[Marketer MCP] HTTP request JSON (parsed)', this.safeJson(parsed));
+            } catch {
+              // ignore
+            }
+          }
+
+          return response;
         },
       });
 
@@ -293,9 +423,19 @@ export class MarketerMCPClient {
         }
       }
 
+      this.debugLog('[Marketer MCP] callTool()', {
+        toolName,
+        args: this.safeJson(args),
+      });
+
       const result = await this.client!.callTool({
         name: toolName,
         arguments: args,
+      });
+
+      this.debugLog('[Marketer MCP] callTool() result', {
+        toolName,
+        contentPreview: this.safeJson(result.content, 6000),
       });
 
       return result.content;

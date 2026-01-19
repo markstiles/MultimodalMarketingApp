@@ -1,0 +1,7 @@
+1. Rich Text
+
+i want this page to be about a healthy diet for school kids. Can you generate two paragraphs of text about the importance of healthy meals and the impact of diet on a getting good grades. Also mention towards the end that there are four pillars of healthy meals. The pillars will be defined separately later. I then want to add a rich text component to the headless-main placeholder and set the text with what you've generated
+
+2. 
+
+I want to insert four promos on the page. Each should represent one of the four pillars for a healthy diet. Each should be an essential part of a diet including protein, carbs, minerals and fiber. I want you to be generate a heading, description and image. The links can be a link to https://google.com for now. I'll update it later. The photo should represent foods for each type of pillar but not the actual value. For example, protein would be an edible version like cooked sliced chicken breast. The description should be a paragraph about what that pillar is and the heading should be a short reflection of that information. Can you generate the content, create the components and add them to the page?

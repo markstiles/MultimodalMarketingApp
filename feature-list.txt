@@ -1,9 +1,19 @@
-
-* less about generating content and more about checking content or setting metadata
-    * how to find images and 
-    * what the process could look like
+* design
+    * the ui needs to design lists better so they are more prominent (bullets or <li> etc) and headings. code blocks should be the width of the text not full available width
+    * the profile selection seems off. I said 'hello' and it set it to 'component populator' more refinement and testing needed
+    * want to manage the instructions for each profile more easily
+    * structure the code more like: controllers (route handlers), services (business logic), apis (defines api methods and uses clients), clients (external connection), resources (data)
+    * remove unused/duplicate env variables
+    * refactor code down to more manageable structure
+    * list out features
+    * not all of the chat text is displayed (thinking for example) and it often isn't a resilient conversation. an error will stop the response.
+    * tools should be queried from mcp not hardcoded but a list should be maintained as an allow list
+    * move the instructions to content and query from graphql
+    * creating a page needs a template id and parent id but should be a name.
+* feeback
+    * less about generating content and more about checking content or setting metadata
+    * how to find an image 
     * automate scaffolding pages and structure
-    *  
 * UI
     * audio interface
     * polish up the UI to be less web 2.0 
@@ -29,19 +39,24 @@
     * is the content good enough on clarity or should we use velir.com 
     * create content in sitecore for site-specific brand voice
     * put the task prompts into content
-    * image gen needs to make very high quality images
+    * instructions for image gen to make very high quality images
 * testing
     * add ML Flow to track and automate prompt testing
-    * session and conversation threads
     * content research
     * building a page
     * create an image then update it 
-    * click on generated images 
-    * delete a conversation 
     * test multiple users and validate they have different sessions
     * test in pages 
+    * features to test
+        * profiles for each type of task
+        * conversations are stored and available to restart, switch between or be deleted
+        * if you leave a conversation for login, the conversation should persist
+        * mcp connection to search and marketer/agent api 
+        * image and text generation available. images should be formatted width to allow four across and should be clickable to view full size
 * analytics 
     * can we draw in any data to help decision making
 * deploy
     * change prisma postgres to supabase postgres
     * how/where to deploy on vercel
+* app
+     `images.domains` is deprecated in favor of `images.remotePatterns`.

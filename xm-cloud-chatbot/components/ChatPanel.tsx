@@ -7,6 +7,8 @@ import MessageBubble from '@/components/MessageBubble';
 import AssistantBadge from '@/components/AssistantBadge';
 import ConversationHistory from '@/components/ConversationHistory';
 import toast, { Toaster } from 'react-hot-toast';
+import { checkAuthStatus } from '@/lib/utils/auth-helpers';
+import { clearChatRecovery, loadChatRecovery, saveChatRecovery } from '@/lib/utils/chat-recovery';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -40,6 +42,7 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
   const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const resumingFromAuthRef = useRef(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -49,17 +52,59 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
     scrollToBottom();
   }, [messages]);
 
-  const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+  useEffect(() => {
+    const recovered = loadChatRecovery(editorContext.userId, editorContext.siteId);
+    if (!recovered) return;
+
+    setConversationId(recovered.conversationId);
+    setConversationTitle(recovered.conversationTitle);
+    setAssistantType(recovered.assistantType as AssistantType);
+    setMessages(
+      recovered.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        images: m.images || [],
+        timestamp: m.timestamp ? new Date(m.timestamp) : undefined,
+      }))
+    );
+
+    const pending = recovered.pendingMessage;
+    if (!pending) return;
+
+    // If we're already authenticated, try to continue automatically.
+    // Otherwise, keep the draft text so the user can send again after login.
+    (async () => {
+      const status = await checkAuthStatus(editorContext.userId);
+      if (status.authenticated) {
+        resumingFromAuthRef.current = true;
+        await sendMessage(pending, { appendUserMessage: false });
+      } else {
+        setInput(pending);
+      }
+    })();
+  }, [editorContext.userId, editorContext.siteId]);
+
+  const sendMessage = async (
+    messageText: string,
+    options?: {
+      appendUserMessage?: boolean;
+    }
+  ) => {
+    const appendUserMessage = options?.appendUserMessage !== false;
+    if (!messageText.trim() || isLoading) return;
 
     const userMessage: Message = {
       role: 'user',
-      content: input,
+      content: messageText,
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInput('');
+    const snapshotMessages = appendUserMessage ? [...messages, userMessage] : [...messages];
+
+    if (appendUserMessage) {
+      setMessages(snapshotMessages);
+      setInput('');
+    }
     setIsLoading(true);
 
     // Create abort controller for this request
@@ -71,7 +116,7 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId,
-          message: input,
+          message: messageText,
           userId: editorContext.userId,
           siteId: editorContext.siteId,
           currentPageId: editorContext.pageId,
@@ -83,6 +128,22 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
       if (response.status === 401) {
         const errorData = await response.json();
         if (errorData.requiresAuth && errorData.authUrl) {
+          // Persist the current conversation state so we can restore after OAuth.
+          saveChatRecovery({
+            userId: editorContext.userId,
+            siteId: editorContext.siteId,
+            conversationId,
+            conversationTitle,
+            assistantType,
+            messages: snapshotMessages.map((m) => ({
+              role: m.role,
+              content: m.content,
+              images: m.images,
+              timestamp: m.timestamp ? m.timestamp.toISOString() : undefined,
+            })),
+            pendingMessage: messageText,
+          });
+
           toast.error('Authentication required. Redirecting to login...');
           setTimeout(() => {
             window.location.href = errorData.authUrl;
@@ -98,18 +159,33 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
       const decoder = new TextDecoder();
       let assistantMessage = '';
 
+      // Buffer incomplete SSE lines across chunks.
+      let sseBuffer = '';
+
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+          // Use streaming decode to avoid corrupting multi-byte characters across chunk boundaries.
+          const chunk = decoder.decode(value, { stream: true });
+          sseBuffer += chunk;
 
-          for (const line of lines) {
+          // Process complete lines only; keep any partial line for the next chunk.
+          while (true) {
+            const newlineIndex = sseBuffer.indexOf('\n');
+            if (newlineIndex === -1) break;
+
+            const rawLine = sseBuffer.slice(0, newlineIndex);
+            sseBuffer = sseBuffer.slice(newlineIndex + 1);
+
+            const line = rawLine.trimEnd();
+            if (!line) continue;
+
             if (line.startsWith('data: ')) {
+              const payload = line.slice(6);
               try {
-                const data = JSON.parse(line.slice(6));
+                const data = JSON.parse(payload);
 
                 switch (data.type) {
                   case 'content':
@@ -183,12 +259,36 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                     }
                     break;
 
+                  case 'warning':
+                    if (data.message) {
+                      toast(data.message, { icon: '⚠️', duration: 5000 });
+                    }
+                    break;
+
                   case 'done':
                     setConversationId(data.conversationId);
+                    setIsLoading(false);
+                    if (resumingFromAuthRef.current) {
+                      clearChatRecovery();
+                      resumingFromAuthRef.current = false;
+                    }
+                    break;
+
+                  case 'error':
+                    console.error('Server error event:', data);
+                    toast.error(data.message || 'An error occurred. Please try again.');
+                    setIsLoading(false);
+                    break;
+
+                  default:
+                    // Log unknown event types so we can extend the client safely.
+                    console.warn('Unknown SSE event type:', data);
                     break;
                 }
               } catch (e) {
-                console.error('Failed to parse SSE data:', e);
+                // If this happens, we likely received malformed JSON (or logs mixed into the stream).
+                // Keep it visible for debugging.
+                console.error('Failed to parse SSE data:', e, { line });
               }
             }
           }
@@ -203,6 +303,10 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
       setIsLoading(false);
       abortControllerRef.current = null;
     }
+  };
+
+  const handleSendMessage = async () => {
+    await sendMessage(input, { appendUserMessage: true });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {

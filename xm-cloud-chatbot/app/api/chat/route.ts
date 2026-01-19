@@ -8,6 +8,7 @@ import { getAssistantConfig } from '@/lib/prompts/templates';
 import { classifyIntent } from '@/lib/utils/classify-intent';
 import { generateConversationTitle } from '@/lib/utils/generate-title';
 import { AssistantType } from '@/lib/types/assistant';
+import { uploadAssetViaAgentApi, updateAssetViaAgentApi } from '@/lib/sitecore/agent-api';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -163,6 +164,32 @@ export async function POST(req: NextRequest) {
         marketerMCPClient = await getMarketerMCPClient(userId);
         const marketerTools = marketerMCPClient.getAvailableTools();
         console.log('Marketer-MCP tools loaded:', marketerTools.length, 'tools');
+
+        if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
+          try {
+            const interesting = new Set([
+              'update_content',
+              'update_fields_on_content_item',
+              'get_content_item_by_id',
+              'get_content_item_by_path',
+            ]);
+            const schemaSummary = marketerTools
+              .filter((t) => interesting.has(String(t.name)))
+              .map((t) => {
+                const schema: any = t.inputSchema || {};
+                const props = schema?.properties ? Object.keys(schema.properties) : [];
+                const required = Array.isArray(schema?.required) ? schema.required : [];
+                return {
+                  name: t.name,
+                  required,
+                  properties: props,
+                };
+              });
+            console.log('[Marketer MCP] Tool schema summary:', JSON.stringify(schemaSummary, null, 2));
+          } catch {
+            console.log('[Marketer MCP] Tool schema summary: [unavailable]');
+          }
+        }
         
         // Combine tools from both MCP servers
         if (tools && marketerTools.length > 0) {
@@ -200,6 +227,9 @@ export async function POST(req: NextRequest) {
             sitecore_create_document: 'Creating document...',
             sitecore_update_document: 'Updating document...',
             sitecore_track_event: 'Tracking event...',
+
+            upload_asset: 'Uploading asset...',
+            update_asset: 'Updating asset...',
 
             // Marketer MCP tools (support both older prefixed names and the raw MCP tool names)
             list_sites: 'Listing all sites...',
@@ -242,12 +272,87 @@ export async function POST(req: NextRequest) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
           };
 
+          const looksLikeActionPromise = (text: string): boolean => {
+            if (!text) return false;
+            // Heuristic: the assistant is promising to take an action "now/shortly".
+            return /(let me|i will|i'll|i am going to|i can|i will now|i'll now).{0,60}(update|create|add|set|populate|insert|publish|configure|proceed|handle this|do that)/i.test(
+              text
+            );
+          };
+
+          const looksLikeXmCloudMutationRequest = (text: string): boolean => {
+            if (!text) return false;
+            // If the user is explicitly asking to change XM Cloud (page/components/datasources/fields),
+            // require at least one tool call so we don't end up with "I'll do that" narration only.
+            const action = /(add|insert|create|update|set|populate|publish|remove|delete|configure)\b/i;
+            const target = /(xm\s*cloud|sitecore|page|component|rendering|datasource|data\s*source|field|placeholder|headless-main|item)\b/i;
+            return action.test(text) && target.test(text);
+          };
+
           // Accumulate tool calls across chunks
           const toolCallAccumulator: Record<number, { id?: string; name?: string; arguments: string }> = {};
+
+          // Per-request cache to avoid re-executing identical tool calls across rounds.
+          // This prevents repeated writes when the model is forced to call tools multiple rounds.
+          const toolCallResultCache = new Map<string, unknown>();
+
+          const stableStringify = (value: unknown): string => {
+            const seen = new WeakSet<object>();
+            const normalize = (v: any): any => {
+              if (v === null || v === undefined) return v;
+              if (typeof v !== 'object') return v;
+              if (seen.has(v)) return '[circular]';
+              seen.add(v);
+              if (Array.isArray(v)) return v.map(normalize);
+              const out: Record<string, any> = {};
+              for (const key of Object.keys(v).sort()) {
+                out[key] = normalize(v[key]);
+              }
+              return out;
+            };
+            return JSON.stringify(normalize(value));
+          };
 
           // Run tool(s) for the current accumulated tool call set
           const runToolCalls = async (): Promise<OpenAI.Chat.ChatCompletionToolMessageParam[]> => {
             const toolResults: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
+
+            const getMarketerToolByName = (name: string): MarketerMCPTool | undefined => {
+              try {
+                return marketerMCPClient?.getAvailableTools().find((t: MarketerMCPTool) => t.name === name);
+              } catch {
+                return undefined;
+              }
+            };
+
+            const buildFieldUpdateArgs = (rawArgs: any, fieldUpdateTool: MarketerMCPTool): any => {
+              const schema: any = fieldUpdateTool?.inputSchema || {};
+              const properties: string[] = schema?.properties ? Object.keys(schema.properties) : [];
+              const required: string[] = Array.isArray(schema?.required) ? schema.required : [];
+
+              const updatedFields = rawArgs?.updatedFields;
+              const baseArgs: any = { ...rawArgs };
+
+              // Remove keys that are specific to update_content semantics if the target tool doesn't accept them.
+              // We'll only delete if the schema indicates it's not supported.
+              for (const key of ['updatedFields', 'createNewVersion']) {
+                if (!properties.includes(key) && key in baseArgs) {
+                  delete baseArgs[key];
+                }
+              }
+
+              // Decide which property name the field-update tool expects for field values.
+              const candidates = ['updatedFields', 'fields', 'dataFields', 'fieldValues'];
+              const chosen =
+                candidates.find((k) => required.includes(k)) ||
+                candidates.find((k) => properties.includes(k)) ||
+                'updatedFields';
+
+              return {
+                ...baseArgs,
+                [chosen]: updatedFields,
+              };
+            };
 
             for (const accumulated of Object.values(toolCallAccumulator)) {
               if (!(accumulated.name && accumulated.arguments && accumulated.id)) continue;
@@ -309,22 +414,70 @@ export async function POST(req: NextRequest) {
                 const debugArgs = JSON.stringify(args, null, 2);
                 console.log(`Executing ${accumulated.name} with args: ${debugArgs}`);
 
+                // Marketer MCP: distinguish between updating an item record/version vs updating field values.
+                // If the model tried to update field values via update_content, reroute to update_fields_on_content_item
+                // (the tool designed for field writes) when available.
+                let effectiveToolName = accumulated.name;
+                let effectiveArgs: any = args;
+                if (accumulated.name === 'update_content') {
+                  const updatedFields = (args as any)?.updatedFields;
+                  const keys = updatedFields && typeof updatedFields === 'object' ? Object.keys(updatedFields) : [];
+                  if (!updatedFields || keys.length === 0) {
+                    console.warn(
+                      '[Marketer MCP] update_content called without updatedFields; this will not change any field values. Use update_fields_on_content_item for field updates.'
+                    );
+                  } else {
+                    console.log('[Marketer MCP] update_content provided updatedFields keys:', keys);
+                    const fieldUpdateTool = getMarketerToolByName('update_fields_on_content_item');
+                    if (fieldUpdateTool) {
+                      effectiveToolName = 'update_fields_on_content_item';
+                      effectiveArgs = buildFieldUpdateArgs(args, fieldUpdateTool);
+                      console.log(
+                        '[Marketer MCP] Rerouting update_content(updatedFields) -> update_fields_on_content_item to actually update field values.'
+                      );
+                    } else {
+                      console.warn(
+                        '[Marketer MCP] update_fields_on_content_item tool not available; proceeding with update_content but field updates may not apply.'
+                      );
+                    }
+                  }
+                }
+
                 // Notify client that a tool is running
-                const toolName = accumulated.name;
-                const toolBaseName = getToolBaseName(toolName);
-                const toolDisplayName = getToolDisplayName(toolName);
+                const statusToolName = effectiveToolName;
+                const toolBaseName = getToolBaseName(statusToolName);
+                const toolDisplayName = getToolDisplayName(statusToolName);
                 const statusMessage =
-                  TOOL_STATUS_LABELS[toolName] ||
+                  TOOL_STATUS_LABELS[statusToolName] ||
                   TOOL_STATUS_LABELS[toolBaseName] ||
                   `Running ${toolDisplayName}...`;
 
                 emit({
                   type: 'status',
-                  toolName,
-                  toolBaseName,
-                  toolDisplayName,
+                  toolName: effectiveToolName,
+                  toolBaseName: getToolBaseName(effectiveToolName),
+                  toolDisplayName: getToolDisplayName(effectiveToolName),
                   message: statusMessage,
                 });
+
+                // Guardrail: if the model calls update_content without updatedFields while trying to change fields,
+                // fail fast with guidance to use update_fields_on_content_item.
+                if (accumulated.name === 'update_content') {
+                  const updatedFields = (args as any)?.updatedFields;
+                  const keys = updatedFields && typeof updatedFields === 'object' ? Object.keys(updatedFields) : [];
+                  if (!updatedFields || keys.length === 0) {
+                    console.warn('[Marketer MCP] Blocking update_content call without updatedFields');
+                    toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify({
+                        error:
+                          'To change field values, use update_fields_on_content_item with explicit field data (e.g., { fields: { text: "<p>...</p>" } }). update_content alone typically updates the item/version metadata only.',
+                      }),
+                    });
+                    continue;
+                  }
+                }
 
                 // Handle image generation locally via OpenAI images API
                 if (accumulated.name === 'generate_image') {
@@ -368,11 +521,85 @@ export async function POST(req: NextRequest) {
                 // Route to appropriate MCP client based on tool name
                 let result;
                 const isMarketerTool =
-                  marketerMCPClient && marketerMCPClient.getAvailableTools().some((t: MarketerMCPTool) => t.name === accumulated.name);
+                  marketerMCPClient && marketerMCPClient.getAvailableTools().some((t: MarketerMCPTool) => t.name === effectiveToolName);
 
                 if (isMarketerTool) {
-                  console.log(`Routing ${accumulated.name} to marketer-mcp`);
-                  result = await marketerMCPClient!.callTool(accumulated.name, args);
+                  // Deduplicate identical Marketer MCP tool calls within this request.
+                  // If the model repeats the same call, reuse the cached result.
+                  const signature = `${effectiveToolName}:${stableStringify(effectiveArgs)}`;
+                  if (toolCallResultCache.has(signature)) {
+                    result = toolCallResultCache.get(signature);
+                    console.log(`[Marketer MCP] Deduped repeated tool call: ${effectiveToolName}`);
+
+                    toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify(result),
+                    });
+
+                    mcpCalls.push({ tool: effectiveToolName, args: effectiveArgs, result });
+                    continue;
+                  }
+
+                  // Special-case: upload_asset via Agent API (raw multipart) instead of the MCP stub.
+                  if (effectiveToolName === 'upload_asset') {
+                    console.log('Routing upload_asset to Sitecore Agent API (raw multipart)');
+                    if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
+                      try {
+                        const fp = (effectiveArgs as any)?.filePath;
+                        const isUrl = typeof fp === 'string' && /^https?:\/\//i.test(fp);
+                        const isData = typeof fp === 'string' && /^data:/i.test(fp);
+                        const hasB64 = typeof (effectiveArgs as any)?.fileContentBase64 === 'string';
+                        const headerKeys = Object.keys(((effectiveArgs as any)?.downloadHeaders ?? {}) as any);
+                        console.log('[upload_asset] filePath:', fp);
+                        console.log('[upload_asset] pathKind:', { isUrl, isData, hasB64, downloadHeaderKeys: headerKeys });
+                      } catch {
+                        // ignore debug logging failures
+                      }
+                    }
+                    result = await uploadAssetViaAgentApi(userId, effectiveArgs);
+                    try {
+                      toolCallResultCache.set(signature, result);
+                    } catch {
+                      // ignore cache failures
+                    }
+                  } else if (effectiveToolName === 'update_asset') {
+                    console.log('Routing update_asset to Sitecore Agent API (raw REST)');
+                    const assetId =
+                      (effectiveArgs as any)?.assetId ||
+                      (effectiveArgs as any)?.asset_id ||
+                      (effectiveArgs as any)?.assetID;
+                    result = await updateAssetViaAgentApi(userId, {
+                      assetId: String(assetId ?? ''),
+                      language: String((effectiveArgs as any)?.language ?? ''),
+                      name: (effectiveArgs as any)?.name,
+                      altText: (effectiveArgs as any)?.altText,
+                      fields: (effectiveArgs as any)?.fields,
+                    });
+                    try {
+                      toolCallResultCache.set(signature, result);
+                    } catch {
+                      // ignore cache failures
+                    }
+                  } else {
+
+                  console.log(`Routing ${effectiveToolName} to marketer-mcp`);
+                  if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
+                    try {
+                      const json = JSON.stringify(effectiveArgs, null, 2);
+                      console.log('[Marketer MCP] Tool args JSON:', json.length > 12000 ? `${json.slice(0, 12000)}…[truncated ${json.length}]` : json);
+                    } catch {
+                      console.log('[Marketer MCP] Tool args JSON: [unserializable]');
+                    }
+                  }
+                    result = await marketerMCPClient!.callTool(effectiveToolName, effectiveArgs);
+
+                    try {
+                      toolCallResultCache.set(signature, result);
+                    } catch {
+                      // ignore cache failures
+                    }
+                  }
                 } else {
                   console.log(`Routing ${accumulated.name} to search-mcp`);
                   const mcpClient = await getMCPClient();
@@ -380,15 +607,15 @@ export async function POST(req: NextRequest) {
                 }
 
                 console.log(`Result from ${accumulated.name}:`, result);
-                mcpCalls.push({ tool: accumulated.name, args, result });
+                mcpCalls.push({ tool: effectiveToolName, args: effectiveArgs, result });
 
                 await prisma.analytics.create({
                   data: {
                     conversationId: conversation.id,
                     eventType: 'mcp_call',
                     eventData: {
-                      tool: accumulated.name,
-                      args,
+                      tool: effectiveToolName,
+                      args: effectiveArgs,
                       timestamp: new Date(),
                     },
                   },
@@ -425,12 +652,35 @@ export async function POST(req: NextRequest) {
           let completed = false;
           let rounds = 0;
 
+          let forceToolCallNextRound = false;
+          let forcedToolRetryUsed = false;
+
+          // Track tool names the model *requested* (even if not executed).
+          // This helps debug cases where the model indicates tool use but later fails to run tools.
+          const requestedToolNames = new Set<string>();
+
           while (!completed && rounds < 6) {
             rounds += 1;
+
+            // Only force tool usage until we have at least one successful tool call.
+            // Otherwise, the model can get stuck calling tools every round (up to 6).
+            const requireToolsThisRound = forceToolCallNextRound;
+            forceToolCallNextRound = false;
+
+            const shouldRequireToolCall =
+              Array.isArray(tools) &&
+              tools.length > 0 &&
+              (requireToolsThisRound ||
+                (intentResult?.assistantType === 'component_populator' &&
+                  looksLikeXmCloudMutationRequest(message) &&
+                  mcpCalls.length === 0));
+
             const completion = await openai.chat.completions.create({
               model: 'gpt-4-turbo',
               messages: currentMessages,
               tools,
+              // Some OpenAI SDK typings don't include 'required'; cast to avoid type friction.
+              tool_choice: (shouldRequireToolCall ? 'required' : 'auto') as any,
               stream: true,
               temperature: 0.7,
             });
@@ -454,6 +704,19 @@ export async function POST(req: NextRequest) {
 
                   if (toolCall.function?.name) {
                     toolCallAccumulator[index].name = toolCall.function.name;
+
+                    // Log immediately when the model starts emitting a tool name, but only once per name.
+                    // The user asked for logging when intent isn't empty.
+                    if (intentResult?.assistantType && !requestedToolNames.has(toolCall.function.name)) {
+                      requestedToolNames.add(toolCall.function.name);
+                      console.log('[Tool request]', {
+                        intent: intentResult.assistantType,
+                        tool: toolCall.function.name,
+                        toolCallId: toolCall.id,
+                        round: rounds,
+                        conversationId: conversation?.id,
+                      });
+                    }
                   }
 
                   if (toolCall.function?.arguments) {
@@ -506,6 +769,35 @@ export async function POST(req: NextRequest) {
             }
 
             if (finishReason === 'stop') {
+              // If the assistant claims it will take an XM Cloud action but didn't emit tool_calls,
+              // do one forced retry that requires tools (prevents "I'll do that now" without execution).
+              const interimClean = cleanIncompleteMarkdown(fullResponse);
+              const shouldForceRetry =
+                !forcedToolRetryUsed &&
+                Array.isArray(tools) &&
+                tools.length > 0 &&
+                intentResult?.assistantType === 'component_populator' &&
+                looksLikeActionPromise(interimClean) &&
+                mcpCalls.length === 0;
+
+              if (shouldForceRetry) {
+                forcedToolRetryUsed = true;
+                forceToolCallNextRound = true;
+
+                currentMessages = [
+                  ...currentMessages,
+                  { role: 'assistant', content: interimClean },
+                  {
+                    role: 'system',
+                    content:
+                      'You described an XM Cloud action. Now invoke the appropriate MCP tools to perform it. Call tools; do not respond with prose.',
+                  },
+                ];
+
+                // Continue the loop to allow tool_calls to occur.
+                continue;
+              }
+
               completed = true;
               break;
             }
@@ -536,6 +828,17 @@ export async function POST(req: NextRequest) {
 
           const cleanedResponse = cleanIncompleteMarkdown(fullResponse);
 
+          // If the assistant seems to be promising an action but no tools ran, emit a warning so the UI doesn't
+          // look like it "stalled" or silently dropped an intended action.
+          const promisedActionButNoTools = looksLikeActionPromise(cleanedResponse) && mcpCalls.length === 0;
+          if (promisedActionButNoTools) {
+            emit({
+              type: 'warning',
+              message:
+                'The assistant described an action, but no tools were invoked. If you intended an XM Cloud update, retry or ask it to run the MCP tools explicitly.',
+            });
+          }
+
           await prisma.message.create({
             data: {
               conversationId: conversation.id,
@@ -545,6 +848,12 @@ export async function POST(req: NextRequest) {
               currentPageId,
               tokens: tokenCount,
               latencyMs: latency,
+              // Prisma Json input types are strict; mcpCalls contains unknown values.
+              // This is safe at runtime (JSON-serializable) and intended for debugging/analytics.
+              mcpCalls: {
+                calls: mcpCalls as any,
+                promisedActionButNoTools,
+              } as any,
             },
           });
 
@@ -589,7 +898,21 @@ export async function POST(req: NextRequest) {
           controller.close();
         } catch (error) {
           console.error('Streaming error:', error);
-          controller.error(error);
+          try {
+            const encoder = new TextEncoder();
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: 'error',
+                  message: 'Streaming error',
+                  details: error instanceof Error ? error.message : String(error),
+                })}\n\n`
+              )
+            );
+          } catch {
+            // ignore
+          }
+          controller.close();
         }
       },
     });
