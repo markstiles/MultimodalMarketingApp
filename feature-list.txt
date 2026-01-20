@@ -10,6 +10,8 @@
     * tools should be queried from mcp not hardcoded but a list should be maintained as an allow list
     * move the instructions to content and query from graphql
     * creating a page needs a template id and parent id but should be a name.
+    * analyze an image from the media library and set the alt text (or folder)
+    * analyze page content and set the metadata fields
 * feeback
     * less about generating content and more about checking content or setting metadata
     * how to find an image 

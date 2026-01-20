@@ -15,6 +15,7 @@ export default function AssistantBadge({ type }: AssistantBadgeProps) {
     purple: 'bg-purple-100 text-purple-800 border-purple-200',
     green: 'bg-green-100 text-green-800 border-green-200',
     orange: 'bg-orange-100 text-orange-800 border-orange-200',
+    teal: 'bg-teal-100 text-teal-800 border-teal-200',
   };
 
   return (

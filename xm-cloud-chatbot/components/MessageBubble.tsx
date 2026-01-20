@@ -8,6 +8,14 @@ interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   images?: string[];
+  assets?: Array<{
+    kind: 'image' | 'file';
+    url: string;
+    thumbUrl?: string;
+    name?: string;
+    extension?: string;
+    description?: string;
+  }>;
   timestamp?: Date;
 }
 
@@ -78,6 +86,58 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                   className="h-auto w-full object-cover"
                   sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
                 />
+              </a>
+            ))}
+          </div>
+        )}
+
+        {message.assets && message.assets.length > 0 && (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            {message.assets.map((asset, idx) => (
+              <a
+                key={idx}
+                href={asset.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 rounded-md border border-gray-200 bg-gray-50 p-2 hover:bg-gray-100 transition-colors"
+                title={asset.url}
+              >
+                {asset.kind === 'image' && asset.thumbUrl ? (
+                  <span className="block relative h-[56px] w-[56px] shrink-0 overflow-hidden rounded-md border border-gray-200 bg-white">
+                    <Image
+                      src={asset.thumbUrl}
+                      alt={asset.name || asset.description || 'Asset thumbnail'}
+                      width={56}
+                      height={56}
+                      className="h-full w-full object-cover"
+                    />
+                  </span>
+                ) : (
+                  <span className="flex h-[56px] w-[56px] shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600">
+                    <svg
+                      className="h-6 w-6"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <path d="M14 2v6h6" />
+                    </svg>
+                  </span>
+                )}
+
+                <span className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-gray-900">
+                    {asset.name || asset.url}
+                  </div>
+                  <div className="truncate text-xs text-gray-500">
+                    {asset.kind === 'image' ? 'Image' : 'File'}
+                    {asset.extension ? ` • .${asset.extension.replace(/^\./, '')}` : ''}
+                  </div>
+                </span>
               </a>
             ))}
           </div>

@@ -3,6 +3,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { prisma } from '@/lib/db';
+import { isDatabaseUnavailableError } from '@/lib/utils/db-errors';
 
 export interface MarketerMCPTool {
   name: string;
@@ -491,6 +492,7 @@ export async function getMarketerMCPClient(userId: string): Promise<MarketerMCPC
 export async function checkMarketerMCPAuth(userId: string): Promise<{
   authenticated: boolean;
   requiresAuth: boolean;
+  dbUnavailable?: boolean;
 }> {
   try {
     const tokenRecord = await prisma.oAuthToken.findUnique({
@@ -564,6 +566,9 @@ export async function checkMarketerMCPAuth(userId: string): Promise<{
     return { authenticated: true, requiresAuth: false };
   } catch (error) {
     console.error('Error checking Marketer MCP auth:', error);
+    if (isDatabaseUnavailableError(error)) {
+      return { authenticated: false, requiresAuth: false, dbUnavailable: true };
+    }
     return { authenticated: false, requiresAuth: true };
   }
 }

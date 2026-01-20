@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { EditorContext, isValidEditorOrigin } from '@/lib/types/editor-messages';
+import { EditorContext, MediaAssetContext, isValidEditorOrigin } from '@/lib/types/editor-messages';
 import ChatPanel from '@/components/ChatPanel';
 
 export default function EditorPanelPage() {
@@ -15,6 +15,9 @@ export default function EditorPanelPage() {
           siteName: 'multimodalmarketing',
           pagePath: '/test-page',
           language: 'en',
+          environmentHost:
+            process.env.NEXT_PUBLIC_ENVIRONMENT_HOST ||
+            process.env.NEXT_PUBLIC_SITECORE_ENVIRONMENT_NAME,
         }
       : null
   );
@@ -39,7 +42,28 @@ export default function EditorPanelPage() {
       switch (message.type) {
         case 'context':
           // Editor is providing initial context
-          setEditorContext(message.data as EditorContext);
+          setEditorContext(() => {
+            const raw = message.data as any;
+            const pickEnv = (...values: Array<unknown>): string | undefined => {
+              for (const v of values) {
+                if (typeof v === 'string' && v.trim()) return v.trim();
+              }
+              return undefined;
+            };
+
+            const environmentHost = pickEnv(
+              raw?.environmentHost,
+              raw?.environment_host,
+              raw?.ENVIRONMENT_HOST,
+            );
+
+            const normalized: EditorContext = {
+              ...(raw as EditorContext),
+              ...(environmentHost ? { environmentHost } : {}),
+            };
+
+            return normalized;
+          });
           setIsReady(true);
           break;
 
@@ -58,6 +82,30 @@ export default function EditorPanelPage() {
             ...prev!,
             selectedComponentId: message.data.componentId,
           }));
+          break;
+
+        case 'asset_selected':
+          // User selected an asset in the media library
+          setEditorContext((prev) => {
+            const raw = message.data as any;
+            const asset: MediaAssetContext = {
+              itemId: raw?.itemId ?? raw?.id ?? raw?.item_id,
+              path: raw?.path,
+              type: raw?.type,
+              altText: raw?.altText ?? raw?.alt_text,
+              width: raw?.width,
+              height: raw?.height,
+              extension: raw?.extension,
+              size: raw?.size,
+              description: raw?.description,
+              url: raw?.url,
+            };
+
+            return {
+              ...prev!,
+              selectedAsset: asset,
+            };
+          });
           break;
 
         default:

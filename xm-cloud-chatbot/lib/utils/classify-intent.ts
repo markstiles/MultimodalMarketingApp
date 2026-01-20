@@ -18,6 +18,20 @@ export async function classifyIntent(
   conversationHistory?: Array<{ role: string; content: string }>,
   currentAssistantType?: AssistantType
 ): Promise<IntentClassification> {
+  const trimmed = userMessage.trim();
+  const looksLikeGreetingOnly = /^(hi|hello|hey|yo|good\s+morning|good\s+afternoon|good\s+evening)(\s+there)?[!.\s]*$/i.test(
+    trimmed
+  );
+  if (looksLikeGreetingOnly && (!conversationHistory || conversationHistory.length === 0)) {
+    const fallbackType = currentAssistantType || 'content_auditor';
+    return {
+      assistantType: fallbackType,
+      confidence: 10,
+      reasoning: 'Greeting-only message; keeping default assistant.',
+      shouldSwitch: false,
+    };
+  }
+
   try {
     const messages: Array<{ role: 'system' | 'user'; content: string }> = [
       {
@@ -38,7 +52,7 @@ ${currentAssistantType ? `Current assistant type is: ${currentAssistantType}. On
 
 Respond with a JSON object in this format:
 {
-  "assistantType": "content_auditor|campaign_designer|seo_optimizer|component_populator",
+  "assistantType": "content_auditor|campaign_designer|seo_optimizer|asset_manager|component_populator",
   "confidence": 85,
   "reasoning": "Brief explanation of why this type was chosen"
 }`
@@ -100,6 +114,7 @@ function fallbackIntentClassification(
     content_auditor: 0,
     campaign_designer: 0,
     seo_optimizer: 0,
+    asset_manager: 0,
     component_populator: 0
   };
 

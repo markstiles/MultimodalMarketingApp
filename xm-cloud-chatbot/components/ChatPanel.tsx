@@ -14,6 +14,20 @@ interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   images?: string[];
+  assets?: Array<{
+    kind: 'image' | 'file';
+    url: string;
+    thumbUrl?: string;
+    name?: string;
+    itemId?: string;
+    path?: string;
+    extension?: string;
+    size?: number;
+    description?: string;
+    width?: number;
+    height?: number;
+    altText?: string;
+  }>;
   timestamp?: Date;
 }
 
@@ -120,6 +134,8 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
           userId: editorContext.userId,
           siteId: editorContext.siteId,
           currentPageId: editorContext.pageId,
+          environmentHost: editorContext.environmentHost,
+          selectedAsset: editorContext.selectedAsset,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -153,7 +169,17 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         }
       }
 
-      if (!response.ok) throw new Error('Failed to send message');
+      if (!response.ok) {
+        // Attempt to surface a useful server-provided error message.
+        let serverMessage: string | undefined;
+        try {
+          const data = await response.json();
+          serverMessage = data?.message || data?.error;
+        } catch {
+          // ignore
+        }
+        throw new Error(serverMessage || `Failed to send message (${response.status})`);
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -230,6 +256,33 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
                           role: 'assistant',
                           content: assistantMessage,
                           images: urls,
+                          timestamp: new Date(),
+                        });
+                      }
+
+                      return newMessages;
+                    });
+                    break;
+
+                  case 'assets':
+                    setMessages((prev) => {
+                      const newMessages = [...prev];
+                      const lastMessage = newMessages[newMessages.length - 1];
+                      const assets = (data.assets || []) as Message['assets'];
+
+                      if (!assets || assets.length === 0) return newMessages;
+
+                      if (lastMessage?.role === 'assistant') {
+                        newMessages[newMessages.length - 1] = {
+                          ...lastMessage,
+                          assets: [...(lastMessage.assets || []), ...assets],
+                          timestamp: new Date(),
+                        };
+                      } else {
+                        newMessages.push({
+                          role: 'assistant',
+                          content: assistantMessage,
+                          assets: assets,
                           timestamp: new Date(),
                         });
                       }

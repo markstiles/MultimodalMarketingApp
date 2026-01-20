@@ -4,11 +4,14 @@ import { prisma } from '@/lib/db';
 import { getMCPClient } from '@/lib/mcp/search-client';
 import { getMarketerMCPClient, checkMarketerMCPAuth, MarketerMCPTool } from '@/lib/mcp/marketer-client';
 import { getAllTools } from '@/lib/mcp/tools';
-import { getAssistantConfig } from '@/lib/prompts/templates';
+import { getAssistantConfig } from '@/lib/prompts';
 import { classifyIntent } from '@/lib/utils/classify-intent';
 import { generateConversationTitle } from '@/lib/utils/generate-title';
 import { AssistantType } from '@/lib/types/assistant';
 import { uploadAssetViaAgentApi, updateAssetViaAgentApi } from '@/lib/sitecore/agent-api';
+import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/utils/db-errors';
+import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
+import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -32,7 +35,38 @@ export async function POST(req: NextRequest) {
       userId,
       siteId,
       currentPageId,
+      environmentHost,
+      selectedAsset,
     } = body;
+
+    const normalizeEnvHost = (value: unknown): string | null => {
+      if (typeof value !== 'string') return null;
+      const v = value.trim();
+      if (!v) return null;
+      // Reject common placeholder patterns
+      if (/^\[.+\]$/.test(v)) return null;
+      if (/^<.+>$/.test(v)) return null;
+      if (v.toLowerCase() === 'dxm-example-env') return null;
+      return v;
+    };
+
+    const resolveEnvironmentHost = (): { value: string | undefined; source: string } => {
+      const fromEnv = normalizeEnvHost(process.env.ENVIRONMENT_HOST);
+      if (fromEnv) return { value: fromEnv, source: 'process.env.ENVIRONMENT_HOST' };
+
+      // If ENVIRONMENT_HOST is missing OR set to a placeholder, fall back to request.
+      const fromRequest = normalizeEnvHost(environmentHost);
+      if (fromRequest) return { value: fromRequest, source: 'request.environmentHost' };
+
+      // Optional legacy fallback if someone still sets this in hosting.
+      const legacy = normalizeEnvHost(process.env.SITECORE_ENVIRONMENT_NAME);
+      if (legacy) return { value: legacy, source: 'process.env.SITECORE_ENVIRONMENT_NAME' };
+
+      return { value: undefined, source: 'unset' };
+    };
+
+    const resolvedEnv = resolveEnvironmentHost();
+    const effectiveEnvironmentHost: string | undefined = resolvedEnv.value;
 
     if (!message || !userId || !siteId) {
       return NextResponse.json(
@@ -43,6 +77,16 @@ export async function POST(req: NextRequest) {
 
     // Check if user is authenticated for marketer-mcp
     const authStatus = await checkMarketerMCPAuth(userId);
+    if (authStatus.dbUnavailable) {
+      return NextResponse.json(
+        {
+          error: 'Database unavailable',
+          code: 'DB_UNAVAILABLE',
+          message: getDatabaseUnavailableHint(),
+        },
+        { status: 503 }
+      );
+    }
     if (authStatus.requiresAuth) {
       return NextResponse.json(
         {
@@ -128,6 +172,47 @@ export async function POST(req: NextRequest) {
     );
 
     // Prepare messages for OpenAI
+    const assetUrl = buildEdgeAssetUrl({
+      environmentHost: effectiveEnvironmentHost,
+      path: selectedAsset?.path,
+      extension: selectedAsset?.extension,
+      explicitUrl: selectedAsset?.url,
+    });
+
+    const selectedAssetText = selectedAsset
+      ? [
+          'Selected asset context (from media library):',
+          selectedAsset.itemId ? `- itemId: ${selectedAsset.itemId}` : null,
+          selectedAsset.path ? `- path: ${selectedAsset.path}` : null,
+          selectedAsset.type ? `- type: ${selectedAsset.type}` : null,
+          selectedAsset.altText ? `- altText: ${selectedAsset.altText}` : null,
+          typeof selectedAsset.width === 'number' ? `- width: ${selectedAsset.width}` : null,
+          typeof selectedAsset.height === 'number' ? `- height: ${selectedAsset.height}` : null,
+          selectedAsset.extension ? `- extension: ${selectedAsset.extension}` : null,
+          typeof selectedAsset.size === 'number' ? `- size: ${selectedAsset.size}` : null,
+          selectedAsset.description ? `- description: ${selectedAsset.description}` : null,
+          assetUrl ? `- url: ${assetUrl}` : null,
+          effectiveEnvironmentHost
+            ? `- environmentHost: ${effectiveEnvironmentHost} (source: ${resolvedEnv.source})`
+            : `- environmentHost: [missing] (source: ${resolvedEnv.source})`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : null;
+
+    const userContent: string | OpenAI.Chat.ChatCompletionContentPart[] = assetUrl
+      ? [
+          {
+            type: 'text',
+            text: selectedAssetText ? `${message}\n\n${selectedAssetText}` : message,
+          },
+          {
+            type: 'image_url',
+            image_url: { url: assetUrl },
+          } as OpenAI.Chat.ChatCompletionContentPart,
+        ]
+      : (selectedAssetText ? `${message}\n\n${selectedAssetText}` : message);
+
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
         role: 'system',
@@ -141,7 +226,7 @@ export async function POST(req: NextRequest) {
       ),
       {
         role: 'user',
-        content: message,
+        content: userContent,
       },
     ];
 
@@ -220,6 +305,7 @@ export async function POST(req: NextRequest) {
 
           const TOOL_STATUS_LABELS: Record<string, string> = {
             generate_image: 'Generating an image... ',
+            generate_asset_url: 'Generating an asset URL...',
             sitecore_search_query: 'Searching content...',
             sitecore_search_with_facets: 'Running faceted search...',
             sitecore_ai_search: 'Running AI search...',
@@ -518,6 +604,67 @@ export async function POST(req: NextRequest) {
                   continue;
                 }
 
+                // Utility: build Edge asset URL locally
+                if (accumulated.name === 'generate_asset_url') {
+                  const resolvedEnv =
+                    normalizeEnvHost(args.environmentHost) ||
+                    effectiveEnvironmentHost;
+
+                  // If the environmentHost looks like an unexpanded placeholder, treat as missing.
+                  if (!resolvedEnv) {
+                    toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify({
+                        error:
+                          'Missing environmentHost. Set server ENVIRONMENT_HOST or provide a real environmentHost.',
+                      }),
+                    });
+                    continue;
+                  }
+
+                  const url = buildEdgeAssetUrl({
+                    environmentHost: resolvedEnv,
+                    path: args.path,
+                    extension: args.extension,
+                    explicitUrl: args.explicitUrl,
+                  });
+
+                  if (!url) {
+                    toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify({
+                        error:
+                          'Unable to build asset URL. Provide at least { path } and configure ENVIRONMENT_HOST (or pass environmentHost).',
+                      }),
+                    });
+                    continue;
+                  }
+
+                  const wRaw = args.thumbnailWidth;
+                  const w = typeof wRaw === 'number' && Number.isFinite(wRaw) ? wRaw : 100;
+                  const thumbUrl = `${url}${url.includes('?') ? '&' : '?'}w=${encodeURIComponent(String(w))}`;
+
+                  const formattedResult = {
+                    url,
+                    thumbUrl,
+                    environmentHost: resolvedEnv,
+                    path: args.path,
+                    extension: args.extension,
+                  };
+
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(formattedResult),
+                  });
+
+                  mcpCalls.push({ tool: accumulated.name, args, result: formattedResult });
+                  console.log(`Tool ${accumulated.name} executed successfully`);
+                  continue;
+                }
+
                 // Route to appropriate MCP client based on tool name
                 let result;
                 const isMarketerTool =
@@ -608,6 +755,26 @@ export async function POST(req: NextRequest) {
 
                 console.log(`Result from ${accumulated.name}:`, result);
                 mcpCalls.push({ tool: effectiveToolName, args: effectiveArgs, result });
+
+                // If this was a search call that looks like it returned assets, emit structured assets
+                // so the client can render thumbnails/links.
+                try {
+                  const isSearchTool =
+                    effectiveToolName === 'sitecore_search_query' ||
+                    effectiveToolName === 'sitecore_search_with_facets';
+                  if (isSearchTool) {
+                    const assets = extractChatAssetsFromToolResult({
+                      result,
+                      environmentHost: effectiveEnvironmentHost,
+                      thumbnailWidth: 100,
+                    });
+                    if (assets.length > 0) {
+                      emit({ type: 'assets', assets });
+                    }
+                  }
+                } catch (err) {
+                  console.warn('Failed to extract assets from tool result:', err);
+                }
 
                 await prisma.analytics.create({
                   data: {
@@ -926,6 +1093,16 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error('Chat API error:', error);
+    if (isDatabaseUnavailableError(error)) {
+      return NextResponse.json(
+        {
+          error: 'Database unavailable',
+          code: 'DB_UNAVAILABLE',
+          message: getDatabaseUnavailableHint(),
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

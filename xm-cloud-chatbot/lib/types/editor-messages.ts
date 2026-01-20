@@ -5,13 +5,36 @@ export interface EditorContext {
   siteName: string;
   siteId: string;
   userId: string;
+  // Environment-specific host segment for building asset URLs.
+  // Canonical name used by the app.
+  environmentHost?: string;
+
   selectedComponentId?: string;
   pagePath?: string;
   language?: string;
+
+  // Optional media-library selection that the user is "viewing" or has selected.
+  // Used to attach asset context (and optionally the image URL) to chat requests.
+  selectedAsset?: MediaAssetContext;
+}
+
+export interface MediaAssetContext {
+  itemId?: string;
+  path?: string;
+  type?: string;
+  altText?: string;
+  width?: number;
+  height?: number;
+  extension?: string;
+  size?: number;
+  description?: string;
+
+  // Optional pre-built URL to a publicly fetchable rendition.
+  url?: string;
 }
 
 export interface EditorMessage {
-  type: 'context' | 'component_selected' | 'page_changed' | 'ready';
+  type: 'context' | 'component_selected' | 'page_changed' | 'asset_selected' | 'ready';
   data: EditorContext | Record<string, unknown>;
   origin: string;
 }

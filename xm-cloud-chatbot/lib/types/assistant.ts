@@ -4,6 +4,7 @@ export type AssistantType =
   | 'content_auditor'
   | 'campaign_designer'
   | 'seo_optimizer'
+  | 'asset_manager'
   | 'component_populator';
 
 export interface AssistantConfig {

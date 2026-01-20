@@ -175,6 +175,45 @@ export const IMAGE_GENERATION_TOOL = {
   },
 };
 
+// Utility tool: generate Edge asset URLs for images/files
+export const ASSET_URL_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'generate_asset_url',
+    description:
+      'Generate a full Sitecore Edge asset URL (and optional thumbnail URL) from environmentHost + asset path/extension. Use this instead of guessing URLs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        environmentHost: {
+          type: 'string',
+          description:
+            'Environment-specific host segment (e.g., "xmc-...-dev..."). If omitted, the server default ENVIRONMENT_HOST is used.',
+        },
+        path: {
+          type: 'string',
+          description: 'Asset path under Edge, e.g. "/project/velir/site/first/my-image"',
+        },
+        extension: {
+          type: 'string',
+          description: 'Optional file extension (e.g., "png"). If path already has an extension, this is ignored.',
+        },
+        explicitUrl: {
+          type: 'string',
+          description: 'If you already have a full http(s) URL, pass it here and it will be returned as-is.',
+        },
+        thumbnailWidth: {
+          type: 'integer',
+          description: 'If provided, also returns thumbUrl with ?w=<thumbnailWidth> (default 100).',
+          minimum: 1,
+          maximum: 2000,
+        },
+      },
+      required: [],
+    },
+  },
+};
+
 export function getAllTools() {
-  return [...SITECORE_SEARCH_TOOLS, IMAGE_GENERATION_TOOL];
+  return [...SITECORE_SEARCH_TOOLS, IMAGE_GENERATION_TOOL, ASSET_URL_TOOL];
 }
