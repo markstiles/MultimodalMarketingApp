@@ -94,18 +94,25 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         {message.assets && message.assets.length > 0 && (
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
             {message.assets.map((asset, idx) => (
+              (() => {
+                const thumbUrl =
+                  asset.kind === 'image'
+                    ? (asset.thumbUrl || `${asset.url}${asset.url.includes('?') ? '&' : '?'}w=100`)
+                    : undefined;
+
+                return (
               <a
                 key={idx}
                 href={asset.url}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="flex items-center gap-3 rounded-md border border-gray-200 bg-gray-50 p-2 hover:bg-gray-100 transition-colors"
                 title={asset.url}
               >
-                {asset.kind === 'image' && asset.thumbUrl ? (
+                {asset.kind === 'image' && thumbUrl ? (
                   <span className="block relative h-[56px] w-[56px] shrink-0 overflow-hidden rounded-md border border-gray-200 bg-white">
                     <Image
-                      src={asset.thumbUrl}
+                      src={thumbUrl}
                       alt={asset.name || asset.description || 'Asset thumbnail'}
                       width={56}
                       height={56}
@@ -139,6 +146,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                   </div>
                 </span>
               </a>
+                );
+              })()
             ))}
           </div>
         )}

@@ -8,7 +8,7 @@ import { getAssistantConfig } from '@/lib/prompts';
 import { classifyIntent } from '@/lib/utils/classify-intent';
 import { generateConversationTitle } from '@/lib/utils/generate-title';
 import { AssistantType } from '@/lib/types/assistant';
-import { uploadAssetViaAgentApi, updateAssetViaAgentApi } from '@/lib/sitecore/agent-api';
+import { hasAgentApiCredentialsConfigured, uploadAssetViaAgentApi, updateAssetViaAgentApi } from '@/lib/sitecore/agent-api';
 import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/utils/db-errors';
 import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
 import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
@@ -16,6 +16,53 @@ import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+const MAX_INLINE_IMAGE_BYTES = 2_000_000; // keep well under typical model limits (base64 expands ~33%)
+
+function withSearchParam(url: string, key: string, value: string): string {
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has(key)) u.searchParams.set(key, value);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+async function tryFetchImageAsDataUrl(url: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      // Avoid caching surprises when assets are updated.
+      cache: 'no-store',
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) return null;
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().startsWith('image/')) return null;
+
+    const contentLengthHeader = response.headers.get('content-length');
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
+    if (Number.isFinite(contentLength) && contentLength > MAX_INLINE_IMAGE_BYTES) {
+      return null;
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > MAX_INLINE_IMAGE_BYTES) return null;
+
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    return `data:${contentType};base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
 
 // Helper function to clean up incomplete markdown image syntax
 function cleanIncompleteMarkdown(text: string): string {
@@ -174,8 +221,7 @@ export async function POST(req: NextRequest) {
     // Prepare messages for OpenAI
     const assetUrl = buildEdgeAssetUrl({
       environmentHost: effectiveEnvironmentHost,
-      path: selectedAsset?.path,
-      extension: selectedAsset?.extension,
+      assetId: selectedAsset?.itemId,
       explicitUrl: selectedAsset?.url,
     });
 
@@ -200,18 +246,9 @@ export async function POST(req: NextRequest) {
           .join('\n')
       : null;
 
-    const userContent: string | OpenAI.Chat.ChatCompletionContentPart[] = assetUrl
-      ? [
-          {
-            type: 'text',
-            text: selectedAssetText ? `${message}\n\n${selectedAssetText}` : message,
-          },
-          {
-            type: 'image_url',
-            image_url: { url: assetUrl },
-          } as OpenAI.Chat.ChatCompletionContentPart,
-        ]
-      : (selectedAssetText ? `${message}\n\n${selectedAssetText}` : message);
+    // NOTE: Do not fetch/inline the image before starting the SSE stream; that makes the UI look stalled.
+    // We'll attach the image inside the stream (and emit status updates) just before the OpenAI call.
+    const userContent: string = selectedAssetText ? `${message}\n\n${selectedAssetText}` : message;
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
@@ -257,6 +294,8 @@ export async function POST(req: NextRequest) {
               'update_fields_on_content_item',
               'get_content_item_by_id',
               'get_content_item_by_path',
+              'update_asset',
+              'upload_asset',
             ]);
             const schemaSummary = marketerTools
               .filter((t) => interesting.has(String(t.name)))
@@ -366,6 +405,16 @@ export async function POST(req: NextRequest) {
             );
           };
 
+          const looksLikeToolRequiredAction = (text: string): boolean => {
+            if (!text) return false;
+            // Narrower heuristic: only warn/force-retry when the assistant promises to mutate XM Cloud or assets.
+            // (Image analysis itself does not require tools.)
+            const promise = /(let me|i will|i'll|i am going to|i can|i will now|i'll now)\b/i;
+            const action = /(update|create|add|set|populate|insert|publish|configure|remove|delete|rename|move|upload)\b/i;
+            const target = /(xm\s*cloud|sitecore|page|component|rendering|datasource|data\s*source|field|item|asset|media\s*library|alt\s*text)\b/i;
+            return promise.test(text) && action.test(text) && target.test(text);
+          };
+
           const looksLikeXmCloudMutationRequest = (text: string): boolean => {
             if (!text) return false;
             // If the user is explicitly asking to change XM Cloud (page/components/datasources/fields),
@@ -409,6 +458,59 @@ export async function POST(req: NextRequest) {
               } catch {
                 return undefined;
               }
+            };
+
+            const normalizeUpdateAssetArgsForMarketerTool = (rawArgs: any): any => {
+              const tool = getMarketerToolByName('update_asset');
+              const schema: any = tool?.inputSchema || {};
+              const properties: string[] = schema?.properties ? Object.keys(schema.properties) : [];
+
+              const assetId =
+                rawArgs?.assetId ??
+                rawArgs?.asset_id ??
+                rawArgs?.assetID ??
+                rawArgs?.id;
+
+              const fieldsCandidate = rawArgs?.fields;
+              const fields =
+                fieldsCandidate && typeof fieldsCandidate === 'object' && !Array.isArray(fieldsCandidate)
+                  ? fieldsCandidate
+                  : {};
+
+              // Sitecore field names are often case-sensitive. In this project, the correct alt field name is 'Alt'.
+              // Prefer writing to fields.Alt so the update actually applies.
+              if (typeof rawArgs?.altText === 'string' && rawArgs.altText.trim()) {
+                if ((fields as any).Alt === undefined) {
+                  (fields as any).Alt = rawArgs.altText;
+                }
+              }
+
+              // If the tool doesn't accept altText directly, tuck it into fields.
+              const acceptsAltText = properties.includes('altText') || properties.includes('alt_text');
+              if (!acceptsAltText && typeof rawArgs?.altText === 'string' && rawArgs.altText.trim()) {
+                (fields as any).altText = rawArgs.altText;
+              }
+
+              const out: any = { ...rawArgs };
+
+              // Ensure fields is present (this tool schema requires it in your env).
+              out.fields = fields;
+
+              // Prefer whichever id key the schema actually defines.
+              if (properties.includes('assetId')) out.assetId = String(assetId ?? out.assetId ?? '');
+              else if (properties.includes('asset_id')) out.asset_id = String(assetId ?? out.asset_id ?? '');
+              else if (properties.includes('id')) out.id = String(assetId ?? out.id ?? '');
+              else if (assetId) out.assetId = String(assetId);
+
+              // Keep language consistent.
+              if (properties.includes('language')) out.language = String(rawArgs?.language ?? out.language ?? '');
+
+              // If tool accepts altText directly, keep it.
+              if (acceptsAltText && typeof rawArgs?.altText === 'string') {
+                out.altText = rawArgs.altText;
+              }
+
+              return out;
             };
 
             const buildFieldUpdateArgs = (rawArgs: any, fieldUpdateTool: MarketerMCPTool): any => {
@@ -625,8 +727,7 @@ export async function POST(req: NextRequest) {
 
                   const url = buildEdgeAssetUrl({
                     environmentHost: resolvedEnv,
-                    path: args.path,
-                    extension: args.extension,
+                    assetId: args.assetId,
                     explicitUrl: args.explicitUrl,
                   });
 
@@ -650,8 +751,7 @@ export async function POST(req: NextRequest) {
                     url,
                     thumbUrl,
                     environmentHost: resolvedEnv,
-                    path: args.path,
-                    extension: args.extension,
+                    assetId: args.assetId,
                   };
 
                   toolResults.push({
@@ -688,9 +788,21 @@ export async function POST(req: NextRequest) {
                     continue;
                   }
 
-                  // Special-case: upload_asset via Agent API (raw multipart) instead of the MCP stub.
+                  // Special-case: upload_asset via Agent API (raw multipart) instead of the MCP stub
+                  // but only when Agent API credentials are configured.
                   if (effectiveToolName === 'upload_asset') {
-                    console.log('Routing upload_asset to Sitecore Agent API (raw multipart)');
+                    if (!hasAgentApiCredentialsConfigured()) {
+                      console.warn(
+                        '[Agent API] upload_asset requested but SITECORE_AGENT_API_* credentials are not configured; routing to marketer-mcp.'
+                      );
+                      result = await marketerMCPClient!.callTool(effectiveToolName, effectiveArgs);
+                      try {
+                        toolCallResultCache.set(signature, result);
+                      } catch {
+                        // ignore cache failures
+                      }
+                    } else {
+                      console.log('Routing upload_asset to Sitecore Agent API (raw multipart)');
                     if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
                       try {
                         const fp = (effectiveArgs as any)?.filePath;
@@ -710,23 +822,37 @@ export async function POST(req: NextRequest) {
                     } catch {
                       // ignore cache failures
                     }
+                    }
                   } else if (effectiveToolName === 'update_asset') {
-                    console.log('Routing update_asset to Sitecore Agent API (raw REST)');
-                    const assetId =
-                      (effectiveArgs as any)?.assetId ||
-                      (effectiveArgs as any)?.asset_id ||
-                      (effectiveArgs as any)?.assetID;
-                    result = await updateAssetViaAgentApi(userId, {
-                      assetId: String(assetId ?? ''),
-                      language: String((effectiveArgs as any)?.language ?? ''),
-                      name: (effectiveArgs as any)?.name,
-                      altText: (effectiveArgs as any)?.altText,
-                      fields: (effectiveArgs as any)?.fields,
-                    });
-                    try {
-                      toolCallResultCache.set(signature, result);
-                    } catch {
-                      // ignore cache failures
+                    if (!hasAgentApiCredentialsConfigured()) {
+                      console.warn(
+                        '[Agent API] update_asset requested but SITECORE_AGENT_API_* credentials are not configured; routing to marketer-mcp.'
+                      );
+                      const normalizedArgs = normalizeUpdateAssetArgsForMarketerTool(effectiveArgs);
+                      result = await marketerMCPClient!.callTool(effectiveToolName, normalizedArgs);
+                      try {
+                        toolCallResultCache.set(signature, result);
+                      } catch {
+                        // ignore cache failures
+                      }
+                    } else {
+                      console.log('Routing update_asset to Sitecore Agent API (raw REST)');
+                      const assetId =
+                        (effectiveArgs as any)?.assetId ||
+                        (effectiveArgs as any)?.asset_id ||
+                        (effectiveArgs as any)?.assetID;
+                      result = await updateAssetViaAgentApi(userId, {
+                        assetId: String(assetId ?? ''),
+                        language: String((effectiveArgs as any)?.language ?? ''),
+                        name: (effectiveArgs as any)?.name,
+                        altText: (effectiveArgs as any)?.altText,
+                        fields: (effectiveArgs as any)?.fields,
+                      });
+                      try {
+                        toolCallResultCache.set(signature, result);
+                      } catch {
+                        // ignore cache failures
+                      }
                     }
                   } else {
 
@@ -816,6 +942,53 @@ export async function POST(req: NextRequest) {
           };
 
           let currentMessages: OpenAI.Chat.ChatCompletionMessageParam[] = messages;
+
+          // Attach selected image inside the stream so the UI can show progress while we fetch/inline it.
+          if (assetUrl) {
+            const imagePrepStart = Date.now();
+            emit({ type: 'status', message: 'Loading selected image for analysis...' });
+
+            // Request a resized image for faster transfer + vision processing.
+            const resizedAssetUrl = withSearchParam(assetUrl, 'w', '1024');
+            const inlineImageUrl = await tryFetchImageAsDataUrl(resizedAssetUrl);
+            const imageUrlForModel = inlineImageUrl ?? resizedAssetUrl;
+
+            const prepMs = Date.now() - imagePrepStart;
+            if (prepMs > 500) {
+              emit({
+                type: 'status',
+                message: inlineImageUrl
+                  ? `Selected image loaded (${prepMs}ms)`
+                  : `Using image URL for analysis (${prepMs}ms)`,
+              });
+            }
+
+            // Replace the last user message content with multi-part (text + image).
+            const last = currentMessages[currentMessages.length - 1];
+            if (last && last.role === 'user') {
+              const baseText = typeof last.content === 'string' ? last.content : userContent;
+              currentMessages = [
+                ...currentMessages.slice(0, -1),
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: baseText },
+                    { type: 'image_url', image_url: { url: imageUrlForModel } },
+                  ],
+                },
+              ];
+
+              // Encourage a single-pass answer (avoid "please hold on" without output).
+              currentMessages = [
+                ...currentMessages,
+                {
+                  role: 'system',
+                  content:
+                    'An image is attached. Provide the image description and proposed alt text immediately in this response. Do not say you will analyze it later; just do it now.',
+                },
+              ];
+            }
+          }
           let completed = false;
           let rounds = 0;
 
@@ -843,7 +1016,7 @@ export async function POST(req: NextRequest) {
                   mcpCalls.length === 0));
 
             const completion = await openai.chat.completions.create({
-              model: 'gpt-4-turbo',
+              model: 'gpt-4o',
               messages: currentMessages,
               tools,
               // Some OpenAI SDK typings don't include 'required'; cast to avoid type friction.
@@ -943,8 +1116,8 @@ export async function POST(req: NextRequest) {
                 !forcedToolRetryUsed &&
                 Array.isArray(tools) &&
                 tools.length > 0 &&
-                intentResult?.assistantType === 'component_populator' &&
-                looksLikeActionPromise(interimClean) &&
+                (intentResult?.assistantType === 'component_populator' || intentResult?.assistantType === 'asset_manager') &&
+                looksLikeToolRequiredAction(interimClean) &&
                 mcpCalls.length === 0;
 
               if (shouldForceRetry) {
@@ -997,7 +1170,7 @@ export async function POST(req: NextRequest) {
 
           // If the assistant seems to be promising an action but no tools ran, emit a warning so the UI doesn't
           // look like it "stalled" or silently dropped an intended action.
-          const promisedActionButNoTools = looksLikeActionPromise(cleanedResponse) && mcpCalls.length === 0;
+          const promisedActionButNoTools = looksLikeToolRequiredAction(cleanedResponse) && mcpCalls.length === 0;
           if (promisedActionButNoTools) {
             emit({
               type: 'warning',

@@ -94,14 +94,14 @@ export function extractChatAssetsFromToolResult(args: {
   const assets: ChatAsset[] = [];
 
   for (const c of candidates) {
-    const path = pickString(c, ['path', 'mediaPath', 'image_path', 'asset_path']);
     const explicitUrl = pickString(c, ['url', 'assetUrl', 'imageUrl', 'mediaUrl']);
+    const assetId = pickString(c, ['assetId', 'asset_id', 'itemId', 'id', 'item_id']);
+    const path = pickString(c, ['path', 'mediaPath', 'image_path', 'asset_path']);
     const extension = pickString(c, ['extension', 'ext', 'fileExtension', 'image_extension']);
 
     const url = buildEdgeAssetUrl({
       environmentHost,
-      path,
-      extension,
+      assetId,
       explicitUrl,
     });
 
@@ -118,7 +118,7 @@ export function extractChatAssetsFromToolResult(args: {
       url,
       thumbUrl: isImage ? addWidthParam(url, w) : undefined,
       name: pickString(c, ['name', 'title', 'displayName', 'filename', 'fileName']),
-      itemId: pickString(c, ['itemId', 'id', 'item_id']),
+      itemId: assetId,
       path,
       extension,
       size: asNumber(c?.size),

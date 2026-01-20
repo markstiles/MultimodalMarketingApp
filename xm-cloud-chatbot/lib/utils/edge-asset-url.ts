@@ -1,7 +1,11 @@
 export function buildEdgeAssetUrl(args: {
-  // Canonical name for the environment host segment, e.g. "env-abc123".
-  // Example output: https://edge.sitecorecloud.io/<environmentHost>/<path>.<ext>
+  // Canonical name for the environment host segment, e.g. "xmc-...-dev...".
+  // Output format:
+  // https://<ENVIRONMENT_HOST>.sitecorecloud.io/sitecore/shell/Applications/-/media/<asset_id>.ashx
   environmentHost?: string;
+  // Asset item id (GUID-like). Prefer this for URL construction.
+  assetId?: string;
+  // Legacy / fallback inputs (may exist on some objects); no longer used to build the URL.
   path?: string;
   extension?: string;
   explicitUrl?: string;
@@ -10,22 +14,30 @@ export function buildEdgeAssetUrl(args: {
     return args.explicitUrl;
   }
 
+  const normalizeGuidToN = (value: string): string | null => {
+    const v = (value || '').trim();
+    if (!v) return null;
+    // Common Sitecore-ish formats we may receive:
+    // - {GUID}
+    // - GUID
+    // - GUID with dashes
+    const stripped = v.replace(/^[{(]/, '').replace(/[)}]$/, '').replace(/[-{}]/g, '');
+    if (/^[0-9a-fA-F]{32}$/.test(stripped)) return stripped.toLowerCase();
+    return null;
+  };
+
   const environmentHost = (args.environmentHost ?? '').trim();
-  const path = (args.path || '').trim();
-  if (!environmentHost || !path) return null;
+  const rawAssetId = (args.assetId ?? '').trim();
+  if (!environmentHost || !rawAssetId) return null;
 
-  // Example target format (per project prompt):
-  // https://edge.sitecorecloud.io/<SITECORE_ENVIRONMENT_NAME><image_path>.<image_extension>
-  const base = 'https://edge.sitecorecloud.io';
+  // Asset IDs must be in "short" GUID format (32 hex chars, no braces/dashes)
+  // for the media handler URL.
+  const assetId = normalizeGuidToN(rawAssetId);
+  if (!assetId) return null;
 
-  const hostPart = '/' + environmentHost.replace(/^\/+/, '').replace(/\/+$/, '');
-  const pathPart = '/' + path.replace(/^\/+/, '');
+  const host = environmentHost.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const base = `https://${host}.sitecorecloud.io`;
 
-  const ext = (args.extension || '').replace(/^\./, '').trim();
-
-  // If the path already has an extension, do not append.
-  const hasDotExt = /\.[a-z0-9]{2,5}$/i.test(pathPart);
-  const withExt = !hasDotExt && ext ? `${pathPart}.${ext}` : pathPart;
-
-  return `${base}${hostPart}${withExt}`;
+  // Note: keep the path constant as provided by user.
+  return `${base}/sitecore/shell/Applications/-/media/${encodeURIComponent(assetId)}.ashx`;
 }

@@ -181,7 +181,7 @@ export const ASSET_URL_TOOL = {
   function: {
     name: 'generate_asset_url',
     description:
-      'Generate a full Sitecore Edge asset URL (and optional thumbnail URL) from environmentHost + asset path/extension. Use this instead of guessing URLs.',
+      'Generate a full Sitecore media handler URL (and optional thumbnail URL) from environmentHost + assetId. Use this instead of guessing URLs.',
     parameters: {
       type: 'object',
       properties: {
@@ -190,13 +190,10 @@ export const ASSET_URL_TOOL = {
           description:
             'Environment-specific host segment (e.g., "xmc-...-dev..."). If omitted, the server default ENVIRONMENT_HOST is used.',
         },
-        path: {
+        assetId: {
           type: 'string',
-          description: 'Asset path under Edge, e.g. "/project/velir/site/first/my-image"',
-        },
-        extension: {
-          type: 'string',
-          description: 'Optional file extension (e.g., "png"). If path already has an extension, this is ignored.',
+          description:
+            'Asset item id (GUID). Accepts {GUID} or dashed GUID; it will be normalized to 32-hex "N format" for: https://<ENVIRONMENT_HOST>.sitecorecloud.io/sitecore/shell/Applications/-/media/<asset_id>.ashx',
         },
         explicitUrl: {
           type: 'string',

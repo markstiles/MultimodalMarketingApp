@@ -58,7 +58,7 @@
 * analytics 
     * can we draw in any data to help decision making
 * deploy
-    * change prisma postgres to supabase postgres
     * how/where to deploy on vercel
+    * find a free supabase postgres account to use after deployment to vercel
 * app
      `images.domains` is deprecated in favor of `images.remotePatterns`.

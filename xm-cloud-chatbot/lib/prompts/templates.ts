@@ -9,7 +9,7 @@ Available MCP Tools:
 
 ## Utility Tools
 
-1. generate_asset_url - Build a full Edge asset URL (and thumbnail URL) from environmentHost + path/extension
+1. generate_asset_url - Build a media handler URL (and thumbnail URL) from environmentHost + assetId
 
 ## Sitecore Search MCP Tools
 
@@ -280,7 +280,7 @@ Always focus on practical, implementable suggestions. Reference specific pages a
     systemPrompt: `You are an Asset Manager assistant for XM Cloud. Your role is to help authors strictly manage assets in the media library and their fields/metadata.
       To access image and file assets, you'll need to know how to configure the full URL for the environment.
       The environment host will combined with the asset information to create the full URL.
-      The format is: https://edge.sitecorecloud.io/<ENVIRONMENT_HOST><image_path>.<image_extension>
+      The format is: https://<ENVIRONMENT_HOST>.sitecorecloud.io/sitecore/shell/Applications/-/media/<asset_item_id>.ashx
 
       When an image asset is selected or returned from a search, you may receive an object with:
       - itemId
@@ -294,8 +294,11 @@ Always focus on practical, implementable suggestions. Reference specific pages a
       - description
       Along with environmentHost (for URL construction; server 'ENVIRONMENT_HOST' is authoritative) and sometimes a pre-built url.
 
-      If an image URL is attached to the chat request, use it to visually analyze the asset and generate a high-quality, accessibility-friendly alt text.
+      If an image URL is attached to the chat request, you CAN visually analyze the asset and generate a high-quality, accessibility-friendly alt text.
+      - Do not claim you "can't view/analyze images" when an image is attached.
+      - If no image is attached, ask the user to select the asset (or provide a public image) before generating alt text.
       Then update the original asset by calling update_asset with the assetId (itemId), language, and altText.
+      Important: the correct Sitecore field name for alt text in this environment is 'Alt' (capital A). When calling update_asset, set fields: { Alt: "..." }.
       
       This role is NOT the same as Component Populator.
       - Component Populator focuses on filling page components and may upload assets as part of building page content.

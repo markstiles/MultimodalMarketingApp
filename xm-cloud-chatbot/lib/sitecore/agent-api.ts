@@ -44,6 +44,13 @@ let cachedClientCredentialsToken:
     }
   | undefined;
 
+export function hasAgentApiCredentialsConfigured(): boolean {
+  return Boolean(
+    process.env.SITECORE_AGENT_API_JWT ||
+      (process.env.SITECORE_AGENT_API_CLIENT_ID && process.env.SITECORE_AGENT_API_CLIENT_SECRET)
+  );
+}
+
 function getAgentApiBaseUrl(): string {
   return (process.env.SITECORE_AGENT_API_BASE_URL || 'https://edge-platform.sitecorecloud.io/stream/ai-agent-api').replace(
     /\/+$/,
@@ -114,15 +121,30 @@ async function getAgentApiBearerToken(userId: string): Promise<string> {
     throw err;
   }
 
-  // Fallback: try the user's stored OAuth token (if present). This may or may not
-  // have the correct audience/scopes for the Agent API, but it's better than nothing.
-  const tokenRecord = await prisma.oAuthToken.findUnique({ where: { userId } });
-  if (!tokenRecord?.accessToken) {
-    throw new Error(
-      'No Agent API credentials configured. Set SITECORE_AGENT_API_CLIENT_ID/SITECORE_AGENT_API_CLIENT_SECRET (recommended) or SITECORE_AGENT_API_JWT.'
-    );
+  // Do NOT fall back to the user's Marketer OAuth token by default.
+  // In practice it often doesn't contain the right audience/claims for the Agent API,
+  // and Sitecore may respond with confusing 404 NotFound + "Failed to extract claims from token".
+  // If you truly want to allow user tokens, set SITECORE_AGENT_API_ALLOW_USER_TOKEN=true.
+  const allowUserToken = (process.env.SITECORE_AGENT_API_ALLOW_USER_TOKEN ?? 'false') === 'true';
+  if (allowUserToken) {
+    const tokenRecord = await prisma.oAuthToken.findUnique({ where: { userId } });
+    if (tokenRecord?.accessToken) return tokenRecord.accessToken;
   }
-  return tokenRecord.accessToken;
+
+  throw new Error(
+    'Agent API credentials are not configured. Set SITECORE_AGENT_API_CLIENT_ID and SITECORE_AGENT_API_CLIENT_SECRET (recommended) or SITECORE_AGENT_API_JWT.'
+  );
+}
+
+function buildAgentApiAuthHint(status: number, responseText: string): string {
+  const lower = responseText.toLowerCase();
+  if (lower.includes('failed to extract claims from token')) {
+    return `\nHint: the token used for the Agent API is not valid for this endpoint. Configure SITECORE_AGENT_API_CLIENT_ID/SITECORE_AGENT_API_CLIENT_SECRET or SITECORE_AGENT_API_JWT (do not rely on the Marketer OAuth user token).`;
+  }
+  if (status === 401 || status === 403) {
+    return `\nHint: authentication/authorization failed. Configure SITECORE_AGENT_API_CLIENT_ID/SITECORE_AGENT_API_CLIENT_SECRET or SITECORE_AGENT_API_JWT.`;
+  }
+  return '';
 }
 
 function inferMimeType(extension: string, responseContentType?: string | null): string {
@@ -353,7 +375,7 @@ export async function uploadAssetViaAgentApi(userId: string, args: AgentApiUploa
 
     const text = await resp.text();
     if (!resp.ok) {
-      throw new Error(`Agent API upload failed: ${resp.status} ${text}`);
+      throw new Error(`Agent API upload failed: ${resp.status} ${text}${buildAgentApiAuthHint(resp.status, text)}`);
     }
 
     try {
@@ -379,8 +401,14 @@ export async function updateAssetViaAgentApi(userId: string, args: AgentApiUpdat
     throw new Error('updateAssetViaAgentApi requires language');
   }
 
+  const fields: Record<string, unknown> = { ...(args.fields ?? {}) };
+  if (typeof args.altText === 'string' && args.altText.trim()) {
+    // In this project/environment, the correct alt field name is 'Alt'.
+    if (fields.Alt === undefined) fields.Alt = args.altText;
+  }
+
   const body = {
-    fields: args.fields ?? {},
+    fields,
     language: args.language,
     name: args.name ?? null,
     altText: args.altText ?? null,
@@ -399,7 +427,7 @@ export async function updateAssetViaAgentApi(userId: string, args: AgentApiUpdat
 
   const text = await resp.text();
   if (!resp.ok) {
-    throw new Error(`Agent API update_asset failed: ${resp.status} ${text}`);
+    throw new Error(`Agent API update_asset failed: ${resp.status} ${text}${buildAgentApiAuthHint(resp.status, text)}`);
   }
 
   try {
