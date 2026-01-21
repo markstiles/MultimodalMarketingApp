@@ -84,10 +84,8 @@ function extractCandidateObjects(root: unknown): any[] {
 
 export function extractChatAssetsFromToolResult(args: {
   result: unknown;
-  environmentHost?: string;
   thumbnailWidth?: number;
 }): ChatAsset[] {
-  const environmentHost = args.environmentHost;
   const w = args.thumbnailWidth ?? 100;
 
   const candidates = extractCandidateObjects(args.result);
@@ -100,7 +98,6 @@ export function extractChatAssetsFromToolResult(args: {
     const extension = pickString(c, ['extension', 'ext', 'fileExtension', 'image_extension']);
 
     const url = buildEdgeAssetUrl({
-      environmentHost,
       assetId,
       explicitUrl,
     });

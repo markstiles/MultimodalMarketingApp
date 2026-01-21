@@ -82,38 +82,8 @@ export async function POST(req: NextRequest) {
       userId,
       siteId,
       currentPageId,
-      environmentHost,
       selectedAsset,
     } = body;
-
-    const normalizeEnvHost = (value: unknown): string | null => {
-      if (typeof value !== 'string') return null;
-      const v = value.trim();
-      if (!v) return null;
-      // Reject common placeholder patterns
-      if (/^\[.+\]$/.test(v)) return null;
-      if (/^<.+>$/.test(v)) return null;
-      if (v.toLowerCase() === 'dxm-example-env') return null;
-      return v;
-    };
-
-    const resolveEnvironmentHost = (): { value: string | undefined; source: string } => {
-      const fromEnv = normalizeEnvHost(process.env.ENVIRONMENT_HOST);
-      if (fromEnv) return { value: fromEnv, source: 'process.env.ENVIRONMENT_HOST' };
-
-      // If ENVIRONMENT_HOST is missing OR set to a placeholder, fall back to request.
-      const fromRequest = normalizeEnvHost(environmentHost);
-      if (fromRequest) return { value: fromRequest, source: 'request.environmentHost' };
-
-      // Optional legacy fallback if someone still sets this in hosting.
-      const legacy = normalizeEnvHost(process.env.SITECORE_ENVIRONMENT_NAME);
-      if (legacy) return { value: legacy, source: 'process.env.SITECORE_ENVIRONMENT_NAME' };
-
-      return { value: undefined, source: 'unset' };
-    };
-
-    const resolvedEnv = resolveEnvironmentHost();
-    const effectiveEnvironmentHost: string | undefined = resolvedEnv.value;
 
     if (!message || !userId || !siteId) {
       return NextResponse.json(
@@ -220,7 +190,6 @@ export async function POST(req: NextRequest) {
 
     // Prepare messages for OpenAI
     const assetUrl = buildEdgeAssetUrl({
-      environmentHost: effectiveEnvironmentHost,
       assetId: selectedAsset?.itemId,
       explicitUrl: selectedAsset?.url,
     });
@@ -238,9 +207,7 @@ export async function POST(req: NextRequest) {
           typeof selectedAsset.size === 'number' ? `- size: ${selectedAsset.size}` : null,
           selectedAsset.description ? `- description: ${selectedAsset.description}` : null,
           assetUrl ? `- url: ${assetUrl}` : null,
-          effectiveEnvironmentHost
-            ? `- environmentHost: ${effectiveEnvironmentHost} (source: ${resolvedEnv.source})`
-            : `- environmentHost: [missing] (source: ${resolvedEnv.source})`,
+          `- environmentHost: ${process.env.ENVIRONMENT_HOST}`,
         ]
           .filter(Boolean)
           .join('\n')
@@ -708,25 +675,8 @@ export async function POST(req: NextRequest) {
 
                 // Utility: build Edge asset URL locally
                 if (accumulated.name === 'generate_asset_url') {
-                  const resolvedEnv =
-                    normalizeEnvHost(args.environmentHost) ||
-                    effectiveEnvironmentHost;
-
-                  // If the environmentHost looks like an unexpanded placeholder, treat as missing.
-                  if (!resolvedEnv) {
-                    toolResults.push({
-                      role: 'tool',
-                      tool_call_id: accumulated.id,
-                      content: JSON.stringify({
-                        error:
-                          'Missing environmentHost. Set server ENVIRONMENT_HOST or provide a real environmentHost.',
-                      }),
-                    });
-                    continue;
-                  }
-
+                  
                   const url = buildEdgeAssetUrl({
-                    environmentHost: resolvedEnv,
                     assetId: args.assetId,
                     explicitUrl: args.explicitUrl,
                   });
@@ -750,7 +700,6 @@ export async function POST(req: NextRequest) {
                   const formattedResult = {
                     url,
                     thumbUrl,
-                    environmentHost: resolvedEnv,
                     assetId: args.assetId,
                   };
 
@@ -891,7 +840,6 @@ export async function POST(req: NextRequest) {
                   if (isSearchTool) {
                     const assets = extractChatAssetsFromToolResult({
                       result,
-                      environmentHost: effectiveEnvironmentHost,
                       thumbnailWidth: 100,
                     });
                     if (assets.length > 0) {

@@ -1,8 +1,4 @@
 export function buildEdgeAssetUrl(args: {
-  // Canonical name for the environment host segment, e.g. "xmc-...-dev...".
-  // Output format:
-  // https://<ENVIRONMENT_HOST>.sitecorecloud.io/sitecore/shell/Applications/-/media/<asset_id>.ashx
-  environmentHost?: string;
   // Asset item id (GUID-like). Prefer this for URL construction.
   assetId?: string;
   // Legacy / fallback inputs (may exist on some objects); no longer used to build the URL.
@@ -26,16 +22,15 @@ export function buildEdgeAssetUrl(args: {
     return null;
   };
 
-  const environmentHost = (args.environmentHost ?? '').trim();
   const rawAssetId = (args.assetId ?? '').trim();
-  if (!environmentHost || !rawAssetId) return null;
+  if (!rawAssetId) return null;
 
   // Asset IDs must be in "short" GUID format (32 hex chars, no braces/dashes)
   // for the media handler URL.
   const assetId = normalizeGuidToN(rawAssetId);
   if (!assetId) return null;
 
-  const host = environmentHost.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const host = process.env.ENVIRONMENT_HOST;
   const base = `https://${host}.sitecorecloud.io`;
 
   // Note: keep the path constant as provided by user.
