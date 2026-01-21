@@ -3,8 +3,14 @@
 import { useEffect, useState } from 'react';
 import { EditorContext, MediaAssetContext, isValidEditorOrigin } from '@/lib/types/editor-messages';
 import ChatPanel from '@/components/ChatPanel';
+import { useMarketplaceClient } from '@/lib/hooks/use-marketplace-client';
+import { ApplicationContext, PagesContext } from '@sitecore-marketplace-sdk/client';
 
 export default function EditorPanelPage() {
+  const { client, error, isInitialized } = useMarketplaceClient();
+  const [appContext, setAppContext] = useState<ApplicationContext>();
+  const [pagesContext, setPagesContext] = useState<PagesContext>();
+  
   // For local testing, initialize with mock context
   const [editorContext, setEditorContext] = useState<EditorContext | null>(
     process.env.NODE_ENV === 'development'
@@ -24,6 +30,35 @@ export default function EditorPanelPage() {
   const [isReady, setIsReady] = useState(process.env.NODE_ENV === 'development');
 
   useEffect(() => {
+    if (!error && isInitialized && client) {
+      console.log("Marketplace client initialized successfully.");
+      // Make a query to retrieve the application context
+      client.query("application.context")
+        .then((res) => {
+          console.log("Success retrieving application.context:", res.data);
+          setAppContext(res.data);
+        })
+        .catch((error) => {
+          console.error("Error retrieving application.context:", error);
+        });
+
+      client.query("pages.context", { 
+        subscribe: true,
+        onSuccess: (data) => {
+          console.log('Page has been updated:', data);
+        },
+      })
+        .then((res) => {
+          console.log("Success retrieving pages.context:", res.data);
+          setPagesContext(res.data);
+        })
+        .catch((error) => {
+          console.error("Error retrieving pages.context:", error);
+        });
+    } else if (error) {
+      console.error("Error initializing Marketplace client:", error);
+    }
+
     if (process.env.NODE_ENV === 'development') {
       console.log('🧪 Running in development mode with mock editor context');
       return;
@@ -38,7 +73,7 @@ export default function EditorPanelPage() {
       }
 
       const message = event.data;
-
+      
       switch (message.type) {
         case 'context':
           // Editor is providing initial context
@@ -123,7 +158,7 @@ export default function EditorPanelPage() {
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, []);
+  }, [client, error, isInitialized]);
 
   // Function to send messages back to the editor
   const sendToEditor = (message: unknown) => {

@@ -5,128 +5,128 @@ function getMCPToolsDescription() {
   const domainId = process.env.SITECORE_DOMAIN_ID || '34706982';
   
   return `
-Available MCP Tools:
+    Available MCP Tools:
 
-## Utility Tools
+    ## Utility Tools
 
-1. generate_asset_url - Build a media handler URL (and thumbnail URL) from environmentHost + assetId
+    1. generate_asset_url - Build a media handler URL (and thumbnail URL) from environmentHost + assetId
 
-## Sitecore Search MCP Tools
+    ## Sitecore Search MCP Tools
 
-IMPORTANT: When using these tools, use rfkId: "${rfkId}" and domainId: "${domainId}" as defaults.
+    IMPORTANT: When using these tools, use rfkId: "${rfkId}" and domainId: "${domainId}" as defaults.
 
-1. sitecore_search_query - Execute basic search queries
-   - Parameters: rfkId (use default above), keyphrase, entity, page, limit
+    1. sitecore_search_query - Execute basic search queries
+      - Parameters: rfkId (use default above), keyphrase, entity, page, limit
 
-2. sitecore_search_with_facets - Execute faceted search with filtering
-   - Parameters: rfkId (use default above), keyphrase, facets[], sort
+    2. sitecore_search_with_facets - Execute faceted search with filtering
+      - Parameters: rfkId (use default above), keyphrase, facets[], sort
 
-3. sitecore_get_recommendations - Get personalized content recommendations
-   - Parameters: rfkId (use default above), recommendationId, entity, userId, limit
+    3. sitecore_get_recommendations - Get personalized content recommendations
+      - Parameters: rfkId (use default above), recommendationId, entity, userId, limit
 
-4. sitecore_ai_search - Get AI-powered answers or related questions
-   - Parameters: rfkId (use default above), keyphrase, type (answer|question), entity
+    4. sitecore_ai_search - Get AI-powered answers or related questions
+      - Parameters: rfkId (use default above), keyphrase, type (answer|question), entity
 
-5. sitecore_create_document - Create new documents in the search index
-   - Parameters: domain, source, entity, document
+    5. sitecore_create_document - Create new documents in the search index
+      - Parameters: domain, source, entity, document
 
-6. sitecore_update_document - Update existing documents
-   - Parameters: domain, source, entity, documentId, document, partial
+    6. sitecore_update_document - Update existing documents
+      - Parameters: domain, source, entity, documentId, document, partial
 
-7. sitecore_track_event - Track visitor events for analytics
-   - Parameters: domainId, customerKey, eventType, value, context
+    7. sitecore_track_event - Track visitor events for analytics
+      - Parameters: domainId, customerKey, eventType, value, context
 
-## Sitecore Marketer MCP Tools
+    ## Sitecore Marketer MCP Tools
 
-These tools allow you to interact with XM Cloud Pages Editor content:
+    These tools allow you to interact with XM Cloud Pages Editor content:
 
-1. mcp_marketer-mcp_list_sites - List all sites with name and target hostname
-   - No parameters required
+    1. mcp_marketer-mcp_list_sites - List all sites with name and target hostname
+      - No parameters required
 
-2. mcp_marketer-mcp_get_site_information - Get site information by site ID
-   - Parameters: siteId (required)
+    2. mcp_marketer-mcp_get_site_information - Get site information by site ID
+      - Parameters: siteId (required)
 
-3. mcp_marketer-mcp_get_all_pages_by_site - Get all pages for a site
-   - Parameters: siteName (required), language (optional, default: "en")
+    3. mcp_marketer-mcp_get_all_pages_by_site - Get all pages for a site
+      - Parameters: siteName (required), language (optional, default: "en")
 
-4. mcp_marketer-mcp_search_site - Search site pages by title
-   - Parameters: site_name (required), search_query (required), language (optional)
+    4. mcp_marketer-mcp_search_site - Search site pages by title
+      - Parameters: site_name (required), search_query (required), language (optional)
 
-5. mcp_marketer-mcp_get_site_id_from_item - Get site ID from item ID
-   - Parameters: itemId (required)
+    5. mcp_marketer-mcp_get_site_id_from_item - Get site ID from item ID
+      - Parameters: itemId (required)
 
-6. mcp_marketer-mcp_list_components - List all components for a site
-   - Parameters: site_name (required)
+    6. mcp_marketer-mcp_list_components - List all components for a site
+      - Parameters: site_name (required)
 
-7. mcp_marketer-mcp_get_component - Get component details including datasource requirements
-   - Parameters: component_id (required)
+    7. mcp_marketer-mcp_get_component - Get component details including datasource requirements
+      - Parameters: component_id (required)
 
-8. mcp_marketer-mcp_get_components_on_page - Get all components on a page
-   - Parameters: pageId (required), language (optional), version (optional)
+    8. mcp_marketer-mcp_get_components_on_page - Get all components on a page
+      - Parameters: pageId (required), language (optional), version (optional)
 
-9. mcp_marketer-mcp_get_allowed_components_by_placeholder - Get allowed components by placeholder
-   - Parameters: pageId (required), placeholderName (required), language (optional)
+    9. mcp_marketer-mcp_get_allowed_components_by_placeholder - Get allowed components by placeholder
+      - Parameters: pageId (required), placeholderName (required), language (optional)
 
-10. mcp_marketer-mcp_get_components_by_placeholder - Get components available for a placeholder
-    - Parameters: placeholder_id (required)
+    10. mcp_marketer-mcp_get_components_by_placeholder - Get components available for a placeholder
+        - Parameters: placeholder_id (required)
 
-USE THESE TOOLS when you need to:
-- List or find sites managed in XM Cloud
-- Look up pages, their structure, or content
-- Understand what components are available or on a page
-- Get information about component datasource requirements
-`;
+    USE THESE TOOLS when you need to:
+    - List or find sites managed in XM Cloud
+    - Look up pages, their structure, or content
+    - Understand what components are available or on a page
+    - Get information about component datasource requirements
+    `;
 }
 
 const PAGE_CONTEXT_INSTRUCTIONS = `
-You have access to the current page context through the conversation metadata:
-- currentPageId: The ID of the page the user is currently editing
-- siteId: The ID of the site being worked on
-- userId: The user's identifier
-- environmentHost: Environment-specific host segment used to build full Edge asset URLs (server 'ENVIRONMENT_HOST' is authoritative)
+  You have access to the current page context through the conversation metadata:
+  - currentPageId: The ID of the page the user is currently editing
+  - siteId: The ID of the site being worked on
+  - userId: The user's identifier
+  - environmentHost: Environment-specific host segment used to build full Edge asset URLs (server 'ENVIRONMENT_HOST' is authoritative)
 
-Conversations persist across pages within the same site, so you can reference previous discussions even if the user has navigated to a different page. Always check the currentPageId to understand which page the current message relates to.
-`;
+  Conversations persist across pages within the same site, so you can reference previous discussions even if the user has navigated to a different page. Always check the currentPageId to understand which page the current message relates to.
+  `;
 
 const IMAGE_GENERATION_INSTRUCTIONS = `
-Image generation:
-- If the user asks for an image/visual/hero/banner/illustration, call the function tool generate_image with a concise, descriptive prompt.
-- Include subject, setting, mood, and lighting in the prompt; use 1024x1024 unless the user specifies otherwise.
-- IMPORTANT: Do NOT include metadata like "Generated images:", "Image 1", or markdown image syntax in your response. The images will be displayed automatically.
-- Simply describe what you're generating in natural language, then call the tool. The system will handle displaying the images.
+  Image generation:
+  - If the user asks for an image/visual/hero/banner/illustration, call the function tool generate_image with a concise, descriptive prompt.
+  - Include subject, setting, mood, and lighting in the prompt; use 1024x1024 unless the user specifies otherwise.
+  - IMPORTANT: Do NOT include metadata like "Generated images:", "Image 1", or markdown image syntax in your response. The images will be displayed automatically.
+  - Simply describe what you're generating in natural language, then call the tool. The system will handle displaying the images.
 
-## Image Generation Instructions
+  ## Image Generation Instructions
 
-### gpt-image-1 settings
+  ### gpt-image-1 settings
 
-When the user requests an image, generate gpt-image-1 supports three output resolutions:
+  When the user requests an image, generate gpt-image-1 supports three output resolutions:
 
-- size value: 1024x1024, description: square
-- size value: 1024x1536, description: portrait
-- size value: 1536x1024, description: landscape
+  - size value: 1024x1024, description: square
+  - size value: 1024x1536, description: portrait
+  - size value: 1536x1024, description: landscape
 
-They can all be set to use different quality tiers. The values for the gpt-image-1 tiers are:
+  They can all be set to use different quality tiers. The values for the gpt-image-1 tiers are:
 
-- Low
-- Medium
-- High
+  - Low
+  - Medium
+  - High
 
-### dall-e-3 settings
+  ### dall-e-3 settings
 
-When the user requests an image, dall-e-3 supports two output resolutions:
+  When the user requests an image, dall-e-3 supports two output resolutions:
 
-- 1024x1024, description: square
-- 1024x1792, description: portrait
-- 1792x1024, description: landscape
+  - 1024x1024, description: square
+  - 1024x1792, description: portrait
+  - 1792x1024, description: landscape
 
-The values for the dall-e-3 tiers are:
+  The values for the dall-e-3 tiers are:
 
-- Standard
-- HD
+  - Standard
+  - HD
 
-## default settings
-If the user doesn't specify a resolution, ask which option and/or quality tier they want.
-`;
+  ## default settings
+  If the user doesn't specify a resolution, ask which option and/or quality tier they want.
+  `;
 
 export const ASSISTANT_TEMPLATES: Record<AssistantType, AssistantConfig> = {
   content_auditor: {
@@ -281,6 +281,10 @@ Always focus on practical, implementable suggestions. Reference specific pages a
       To access image and file assets, you'll need to know how to configure the full URL for the environment.
       The environment host will combined with the asset information to create the full URL.
       The format is: https://<ENVIRONMENT_HOST>.sitecorecloud.io/sitecore/shell/Applications/-/media/<asset_item_id>.ashx
+      When you are asked to analyze an image that means you should get the url for the image if you haven't already and attach it as context to the next request for optical recognition. 
+      You will likely be asked to produce an alt text for the user based on the image analysis.
+      When you do produce that alt text always review it with the user before updating the asset in the media library.
+      You want to confirm they are satisfied with the alt text before making any changes to the asset.
 
       When an image asset is selected or returned from a search, you may receive an object with:
       - itemId
