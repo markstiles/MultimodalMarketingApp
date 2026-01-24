@@ -66,7 +66,7 @@ function getAudience(): string {
   return process.env.SITECORE_AGENT_API_AUDIENCE || 'https://api.sitecorecloud.io';
 }
 
-async function getClientCredentialsJwt(): Promise<string | null> {
+export async function getClientCredentialsJwt(): Promise<string | null> {
   const clientId = process.env.SITECORE_AGENT_API_CLIENT_ID;
   const clientSecret = process.env.SITECORE_AGENT_API_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;

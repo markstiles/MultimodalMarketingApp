@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { EditorContext } from '@/lib/types/editor-messages';
+import { MediaAssetContext } from '@/lib/types/editor-messages';
 import { AssistantType } from '@/lib/types/assistant';
 import MessageBubble from '@/components/MessageBubble';
 import AssistantBadge from '@/components/AssistantBadge';
@@ -9,6 +9,7 @@ import ConversationHistory from '@/components/ConversationHistory';
 import toast, { Toaster } from 'react-hot-toast';
 import { checkAuthStatus } from '@/lib/utils/auth-helpers';
 import { clearChatRecovery, loadChatRecovery, saveChatRecovery } from '@/lib/utils/chat-recovery';
+import type { ApplicationContext, PagesContext, UserInfo } from '@sitecore-marketplace-sdk/client';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -32,7 +33,12 @@ interface Message {
 }
 
 interface ChatPanelProps {
-  editorContext: EditorContext;
+  applicationContext: ApplicationContext;
+  pagesContext: PagesContext;
+  user: UserInfo;
+  environmentHost?: string;
+  selectedAsset?: MediaAssetContext;
+  selectedComponentId?: string;
   onSendToEditor: (message: unknown) => void;
 }
 
@@ -46,7 +52,15 @@ function filterStreamContent(content: string): string {
     .trim();
 }
 
-export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelProps) {
+export default function ChatPanel({
+  applicationContext,
+  pagesContext,
+  user,
+  environmentHost,
+  selectedAsset,
+  selectedComponentId,
+  onSendToEditor: _onSendToEditor,
+}: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -67,7 +81,13 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
   }, [messages]);
 
   useEffect(() => {
-    const recovered = loadChatRecovery(editorContext.userId, editorContext.siteId);
+    // Use the Sitecore User ID from the context as the stable identifier for authentication
+    const userId = user.id;
+    const siteId = pagesContext.siteInfo?.id;
+
+    if (!userId || !siteId) return;
+
+    const recovered = loadChatRecovery(userId, siteId);
     if (!recovered) return;
 
     setConversationId(recovered.conversationId);
@@ -88,7 +108,7 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
     // If we're already authenticated, try to continue automatically.
     // Otherwise, keep the draft text so the user can send again after login.
     (async () => {
-      const status = await checkAuthStatus(editorContext.userId);
+      const status = await checkAuthStatus(userId);
       if (status.authenticated) {
         resumingFromAuthRef.current = true;
         await sendMessage(pending, { appendUserMessage: false });
@@ -96,7 +116,7 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         setInput(pending);
       }
     })();
-  }, [editorContext.userId, editorContext.siteId]);
+  }, [user.id, pagesContext.siteInfo?.id]);
 
   const sendMessage = async (
     messageText: string,
@@ -125,17 +145,37 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
     abortControllerRef.current = new AbortController();
 
     try {
+      const userId = user.id;
+      const siteId = pagesContext.siteInfo?.id;
+      const currentPageId = pagesContext.pageInfo?.id;
+
+      if (!userId || !siteId || !currentPageId) {
+        console.error('Missing runtime context details:', { 
+          hasUser: !!user, 
+          userId, 
+          hasPagesContext: !!pagesContext, 
+          siteId, 
+          currentPageId 
+        });
+        throw new Error(`Missing runtime context: UserID: ${userId ? 'present' : 'missing'}, SiteID: ${siteId ? 'present' : 'missing'}, PageID: ${currentPageId ? 'present' : 'missing'}`);
+      }
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId,
           message: messageText,
-          userId: editorContext.userId,
-          siteId: editorContext.siteId,
-          currentPageId: editorContext.pageId,
-          environmentHost: editorContext.environmentHost,
-          selectedAsset: editorContext.selectedAsset,
+          userId,
+          siteId,
+          currentPageId,
+          environmentHost,
+          selectedAsset,
+          selectedComponentId,
+          applicationId: applicationContext.id,
+          applicationContext,
+          pagesContext,
+          hostUser: user,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -146,8 +186,8 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         if (errorData.requiresAuth && errorData.authUrl) {
           // Persist the current conversation state so we can restore after OAuth.
           saveChatRecovery({
-            userId: editorContext.userId,
-            siteId: editorContext.siteId,
+            userId,
+            siteId,
             conversationId,
             conversationTitle,
             assistantType,
@@ -411,8 +451,8 @@ export default function ChatPanel({ editorContext, onSendToEditor }: ChatPanelPr
         {showHistory && (
           <div className="w-64 border-r border-gray-200 bg-gray-50">
             <ConversationHistory
-              userId={editorContext.userId}
-              siteId={editorContext.siteId}
+              userId={user.id}
+              siteId={pagesContext.siteInfo?.id ?? ''}
               currentConversationId={conversationId}
               onSelectConversation={loadConversation}
               onNewConversation={startNewConversation}

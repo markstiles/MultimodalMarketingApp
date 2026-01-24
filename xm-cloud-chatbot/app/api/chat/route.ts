@@ -83,7 +83,18 @@ export async function POST(req: NextRequest) {
       siteId,
       currentPageId,
       selectedAsset,
+      applicationId,
+      applicationContext,
+      pagesContext,
+      hostUser,
     } = body;
+
+    console.log('[Chat API] Auth Check Params:', { 
+      userId, 
+      applicationId, 
+      hasAgentId: Boolean(process.env.SITECORE_AGENT_API_CLIENT_ID),
+      hasAgentSecret: Boolean(process.env.SITECORE_AGENT_API_CLIENT_SECRET)
+    });
 
     if (!message || !userId || !siteId) {
       return NextResponse.json(
@@ -93,7 +104,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if user is authenticated for marketer-mcp
-    const authStatus = await checkMarketerMCPAuth(userId);
+    const authStatus = await checkMarketerMCPAuth(userId, applicationId);
     if (authStatus.dbUnavailable) {
       return NextResponse.json(
         {
@@ -250,7 +261,7 @@ export async function POST(req: NextRequest) {
       
       // Initialize marketer-mcp client
       try {
-        marketerMCPClient = await getMarketerMCPClient(userId);
+        marketerMCPClient = await getMarketerMCPClient(userId, applicationId);
         const marketerTools = marketerMCPClient.getAvailableTools();
         console.log('Marketer-MCP tools loaded:', marketerTools.length, 'tools');
 
@@ -711,6 +722,40 @@ export async function POST(req: NextRequest) {
 
                   mcpCalls.push({ tool: accumulated.name, args, result: formattedResult });
                   console.log(`Tool ${accumulated.name} executed successfully`);
+                  continue;
+                }
+
+                // Client Context Tools
+                if (accumulated.name === 'get_application_context') {
+                  const result = applicationContext || { error: 'Application context not available' };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'get_pages_context') {
+                  const result = pagesContext || { error: 'Pages context not available' };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'get_host_user') {
+                  const result = hostUser || { error: 'Host user information not available' };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
                   continue;
                 }
 

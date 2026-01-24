@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { prisma } from '@/lib/db';
 import { isDatabaseUnavailableError } from '@/lib/utils/db-errors';
+import { getClientCredentialsJwt } from '@/lib/sitecore/agent-api';
 
 export interface MarketerMCPTool {
   name: string;
@@ -17,13 +18,15 @@ export class MarketerMCPClient {
   private availableTools: MarketerMCPTool[] = [];
   private connected: boolean = false;
   private userId: string;
+  private applicationId?: string;
   private accessToken: string | null = null;
 
   private debugEnabled: boolean =
     process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1';
 
-  constructor(userId: string) {
+  constructor(userId: string, applicationId?: string) {
     this.userId = userId;
+    this.applicationId = applicationId;
   }
 
   private redactHeaders(headers: Headers): Record<string, string> {
@@ -152,7 +155,17 @@ export class MarketerMCPClient {
   }
 
   private async getAccessToken(): Promise<string> {
-    // Get token from database
+    // 1. Prefer Service Account (Agent API) token if App Context ID is present
+    if (this.applicationId) {
+      const agentToken = await getClientCredentialsJwt();
+      if (agentToken) {
+        console.log('[Marketer MCP] Using Client Credentials (Agent API) token via Application Context bypass.');
+        return agentToken;
+      }
+      console.warn('[Marketer MCP] Application ID present but could not fetch Agent API token. Falling back to User OAuth.');
+    }
+
+    // 2. Fallback to User OAuth Token from Database
     const tokenRecord = await prisma.oAuthToken.findUnique({
       where: { userId: this.userId },
     });
@@ -472,11 +485,11 @@ export class MarketerMCPClient {
 // Global client instance cache (per user)
 const clientCache = new Map<string, MarketerMCPClient>();
 
-export async function getMarketerMCPClient(userId: string): Promise<MarketerMCPClient> {
+export async function getMarketerMCPClient(userId: string, applicationId?: string): Promise<MarketerMCPClient> {
   let client = clientCache.get(userId);
   
   if (!client) {
-    client = new MarketerMCPClient(userId);
+    client = new MarketerMCPClient(userId, applicationId);
     clientCache.set(userId, client);
   }
 
@@ -489,12 +502,23 @@ export async function getMarketerMCPClient(userId: string): Promise<MarketerMCPC
 }
 
 // Helper to check if user needs authentication
-export async function checkMarketerMCPAuth(userId: string): Promise<{
+export async function checkMarketerMCPAuth(
+  userId: string,
+  applicationId?: string
+): Promise<{
   authenticated: boolean;
   requiresAuth: boolean;
   dbUnavailable?: boolean;
 }> {
   try {
+    // 1. If we have a valid Application ID (proving we are embedded in XM Cloud)
+    //    AND we have configured agent credentials, assume we can use the Service Account.
+    if (applicationId && Boolean(process.env.SITECORE_AGENT_API_CLIENT_ID)) {
+      console.log(`[Auth Check] Application Context ID "${applicationId}" provided. Assuming Agent API credentials flow.`);
+      return { authenticated: true, requiresAuth: false };
+    }
+
+    // 2. Fallback to standard User OAuth flow
     const tokenRecord = await prisma.oAuthToken.findUnique({
       where: { userId },
     });

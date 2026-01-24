@@ -86,7 +86,7 @@ npm run dev
 ### Step 5: Test the Full Flow
 
 1. Open http://localhost:3000/editor-panel
-2. The interface will load with mock editor context
+2. The interface will load with mock Marketplace context
 3. Try these test prompts:
    - "Audit the content on the site" (Content Auditor)
    - "Help me design a campaign" (Campaign Designer)
@@ -98,16 +98,16 @@ npm run dev
 
 ## Testing Without XM Cloud Editor
 
-Since you don't have XM Cloud yet, the app provides mock context. You can modify `app/editor-panel/page.tsx` to set test context:
+Since you don't have XM Cloud yet, the app provides mock Marketplace context (application/pages/user). You can modify `app/editor-panel/page.tsx` to set test context:
 
 ```typescript
-// For local testing, provide mock context
-const [editorContext, setEditorContext] = useState<EditorContext>({
-  pageId: 'test-page-123',
-  siteId: 'test-site-456',
-  userId: 'test-user-789',
-  siteName: 'Test Site'
-});
+// For local testing, provide mock Marketplace context
+setAppContext({ id: 'local-app-001', url: 'http://localhost:3000', name: 'xm-cloud-chatbot' } as ApplicationContext);
+setPagesContext({
+  siteInfo: { id: 'test-site-456', name: 'Test Site', language: 'en' },
+  pageInfo: { id: 'test-page-123', path: '/test-page', language: 'en' },
+} as PagesContext);
+setUserInfo({ id: 'test-user-789', name: 'Test User', email: 'test-user@example.com' } as UserInfo);
 ```
 
 ## Troubleshooting

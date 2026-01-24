@@ -26,11 +26,17 @@ The application has a variety of capabilities to assist users in their tasks:
 
 ## Tech Stack
 
-- **Frontend**: Next.js 15 (App Router), React, TypeScript, Tailwind CSS
-- **Backend**: Next.js API Routes, OpenAI GPT-4
-- **Database**: PostgreSQL (Vercel Postgres), Prisma ORM
-- **MCP Integration**: @markstiles/sitecore-search-mcp (deployed on Railway)
-- **Deployment**: Vercel (Next.js app), Railway (MCP server)
+- **Operating System**: This is being developed in a Windows environment
+- **Command Line Acces**: When you need to run commands, use PowerShell or Windows Terminal
+- **Frontend**: The application being developed is a Next.js 15 (with App Router), written in React, TypeScript, Tailwind CSS
+- **Backend**: This application uses Next.js API Routes
+- **Database**: There is a PostgreSQL database using a Prisma ORM to store conversation history and analytics data
+- **MCP Integration**: The application has an integration with the @markstiles/sitecore-search-mcp npm package (deployed on Railway) to access Sitecore website content for context when answering user questions 
+- **Deployment**: This application is targeting a Vercel (Next.js app) environment and will host the database with Supabase PostgreSQL
+
+## Project Architecture
+
+The main user application is in the /xm-cloud-chatbot folder. This is where the environment file is located. 
 
 ## Main Task
 

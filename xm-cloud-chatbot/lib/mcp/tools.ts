@@ -211,6 +211,45 @@ export const ASSET_URL_TOOL = {
   },
 };
 
+export const CLIENT_CONTEXT_TOOLS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_application_context',
+      description: 'Get the current host application context (from client.query("application.context")).',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_pages_context',
+      description: 'Get the current page context including site info and page info (from client.query("pages.context")).',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_host_user',
+      description: 'Get the current logged-in user information (from client.query("host.user")).',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+];
+
 export function getAllTools() {
-  return [...SITECORE_SEARCH_TOOLS, IMAGE_GENERATION_TOOL, ASSET_URL_TOOL];
+  return [...SITECORE_SEARCH_TOOLS, IMAGE_GENERATION_TOOL, ASSET_URL_TOOL, ...CLIENT_CONTEXT_TOOLS];
 }

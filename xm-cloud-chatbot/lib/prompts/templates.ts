@@ -7,6 +7,15 @@ function getMCPToolsDescription() {
   return `
     Available MCP Tools:
 
+    ## Client Context Tools
+
+    1. get_application_context - Get the current host application context
+      - No parameters required
+    2. get_pages_context - Get the current page context including site info and page info
+      - No parameters required
+    3. get_host_user - Get the current logged-in user information
+      - No parameters required
+
     ## Utility Tools
 
     1. generate_asset_url - Build a media handler URL (and thumbnail URL) from environmentHost + assetId

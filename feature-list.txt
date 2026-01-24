@@ -42,6 +42,7 @@
     * create content in sitecore for site-specific brand voice
     * put the task prompts into content
     * instructions for image gen to make very high quality images
+    * bulk update media alt text and description
 * testing
     * add ML Flow to track and automate prompt testing
     * content research

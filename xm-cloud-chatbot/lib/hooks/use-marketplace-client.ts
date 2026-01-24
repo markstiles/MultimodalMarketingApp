@@ -43,7 +43,7 @@ async function getMarketplaceClient() {
 export function useMarketplaceClient(options: UseMarketplaceClientOptions = {}) {
   // Memoize the options to prevent unnecessary re-renders
   const opts = useMemo(() => ({ ...DEFAULT_OPTIONS, ...options }), [
-    options,
+     options.retryAttempts, options.retryDelay, options.autoInit,
   ]);
   const [state, setState] = useState<MarketplaceClientState>({
     client: null,
