@@ -502,17 +502,26 @@ export async function getAllPagesForSite(siteId: string, language: string, acces
      }
      console.log(`[getAllPagesForSite] Site Name: ${siteName}`);
 
-     // 2. Fetch Pages using SDK (Agent API)
-
-     // 2. Fetch Pages using SDK
-     // This uses the SDK's built-in fetch logic
-     const pagesResult = await xmc.agent.sitesGetAllPagesBySite({
-        path: { siteName },
-        query: { language }
+     // 2. Fetch Pages using Direct Fetch
+     // The SDK (xmc.agent.sitesGetAllPagesBySite) fails because the API returns a raw array [{...}],
+     // but the SDK likely expects { data: [...] }.
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const pagesUrl = `${agentBaseUrl}/api/v1/sites/${siteName}/pages?language=${language}`;
+     
+     console.log(`[getAllPagesForSite] Fetching pages from: ${pagesUrl}`);
+     
+     const pagesRes = await fetch(pagesUrl, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
      });
 
-     const allPages = pagesResult.data || [];
-     console.log(`[getAllPagesForSite] Success. Found ${allPages.length} pages via XMC SDK.`);
+     if (!pagesRes.ok) {
+         throw new Error(`Failed to fetch pages: ${pagesRes.status} ${await pagesRes.text()}`);
+     }
+
+     const allPages = await pagesRes.json();
+     console.log(`[getAllPagesForSite] Success. Found ${allPages.length} pages via Direct Fetch.`);
     
      return allPages.map((p: any) => ({
         id: p.id,
