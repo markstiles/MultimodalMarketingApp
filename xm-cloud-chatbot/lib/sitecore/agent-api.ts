@@ -537,3 +537,652 @@ export async function getAllPagesForSite(siteId: string, language: string, acces
   }
 }
 
+export async function getComponentsOnPage(pageId: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/${pageId}/components?language=${language}`;
+     
+     console.log(`[getComponentsOnPage] Fetching components from: ${url}`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to fetch components: ${res.status} ${await res.text()}`);
+     }
+
+     const components = await res.json();
+     console.log(`[getComponentsOnPage] Success. Found ${components.length} components.`);
+     
+     return components; // Return raw component data
+  } catch (error: any) {
+    console.error('Failed to get components via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function getAllowedComponents(pageId: string, placeholderName: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/${pageId}/placeholders/${placeholderName}/allowed-components?language=${language}`;
+     
+     console.log(`[getAllowedComponents] Fetching allowed components from: ${url}`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to fetch allowed components: ${res.status} ${await res.text()}`);
+     }
+
+     const components = await res.json();
+     console.log(`[getAllowedComponents] Success. Found ${components.length} allowed components.`);
+     
+     return components;
+  } catch (error: any) {
+    console.error('Failed to get allowed components via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function getPage(pageId: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/${pageId}?language=${language}`;
+     
+     console.log(`[getPage] Fetching page info from: ${url}`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to fetch page info: ${res.status} ${await res.text()}`);
+     }
+
+     const page = await res.json();
+     console.log(`[getPage] Success.`);
+     return page;
+  } catch (error: any) {
+    console.error('Failed to get page via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function getPageHtml(pageId: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/${pageId}/html?language=${language}`;
+     
+     console.log(`[getPageHtml] Fetching page HTML from: ${url}`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to fetch page HTML: ${res.status} ${await res.text()}`);
+     }
+
+     const html = await res.text();
+     console.log(`[getPageHtml] Success. Length: ${html.length}`);
+     return html;
+  } catch (error: any) {
+    console.error('Failed to get page html via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function getPagePathByUrl(liveUrl: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/path-by-url?url=${encodeURIComponent(liveUrl)}`;
+     
+     console.log(`[getPagePathByUrl] Fetching path for url: ${liveUrl}`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to fetch path by url: ${res.status} ${await res.text()}`);
+     }
+
+     const data = await res.json();
+     console.log(`[getPagePathByUrl] Success: ${data.path}`);
+     return data;
+  } catch (error: any) {
+    console.error('Failed to get path by url via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function searchSite(siteName: string, query: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/search?siteName=${encodeURIComponent(siteName)}&query=${encodeURIComponent(query)}&language=${language}`;
+     
+     console.log(`[searchSite] Searching site '${siteName}' for '${query}'`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to search site: ${res.status} ${await res.text()}`);
+     }
+
+     const results = await res.json();
+     console.log(`[searchSite] Success. Found ${results.length} results.`);
+     return results;
+  } catch (error: any) {
+    console.error('Failed to search site via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function createPage(parentId: string, templateId: string, name: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/create`;
+     
+     console.log(`[createPage] Creating page '${name}' under '${parentId}'`);
+     
+     const res = await fetch(url, {
+         method: 'POST',
+         headers: {
+             Authorization: `Bearer ${accessToken}`,
+             'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({
+            parentId,
+            templateId,
+            name,
+            language
+         })
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to create page: ${res.status} ${await res.text()}`);
+     }
+
+     const result = await res.json();
+     console.log(`[createPage] Success.`);
+     return result;
+  } catch (error: any) {
+    console.error('Failed to create page via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function listComponents(siteName: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/components?siteName=${encodeURIComponent(siteName)}`;
+     
+     console.log(`[listComponents] Listing components for site '${siteName}'`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to list components: ${res.status} ${await res.text()}`);
+     }
+
+     const results = await res.json();
+     console.log(`[listComponents] Success. Found ${results.length} components.`);
+     return results;
+  } catch (error: any) {
+    console.error('Failed to list components via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function getComponent(componentName: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/components/${encodeURIComponent(componentName)}`;
+     
+     console.log(`[getComponent] Getting details for component '${componentName}'`);
+     
+     const res = await fetch(url, {
+         headers: {
+             Authorization: `Bearer ${accessToken}`
+         }
+     });
+
+     if (!res.ok) {
+         console.warn(`[getComponent] Failed to get component: ${res.status}`);
+         return null; 
+     }
+
+     const result = await res.json();
+     console.log(`[getComponent] Success.`);
+     return result;
+  } catch (error: any) {
+    console.error('Failed to get component details via XM Apps API:', error);
+    throw error;
+  }
+}
+
+// --------------------------------------------------------------------------
+//  Pages API / Agent API - Write Operations
+// --------------------------------------------------------------------------
+
+export async function addComponentOnPage(pageId: string, componentName: string, placeholderName: string, language: string, accessToken: string) {
+  try {
+     const agentBaseUrl = getAgentApiBaseUrl();
+     const url = `${agentBaseUrl}/api/v1/pages/${pageId}/components`;
+     
+     console.log(`[addComponentOnPage] Adding '${componentName}' to '${placeholderName}' on page '${pageId}'`);
+     
+     const res = await fetch(url, {
+         method: 'POST',
+         headers: {
+             Authorization: `Bearer ${accessToken}`,
+             'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({
+            componentName,
+            placeholderName,
+            language
+         })
+     });
+
+     if (!res.ok) {
+         throw new Error(`Failed to add component: ${res.status} ${await res.text()}`);
+     }
+
+     const result = await res.json();
+     console.log(`[addComponentOnPage] Success.`);
+     return result;
+  } catch (error: any) {
+    console.error('Failed to add component via XM Apps API:', error);
+    throw error;
+  }
+}
+
+export async function createContentItem(params: { name: string; templateId: string; parentId: string; language: string }, accessToken: string) {
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/content/create`;
+        
+        console.log(`[createContentItem] Creating content item '${params.name}' under '${params.parentId}'`);
+        
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(params)
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to create content item: ${res.status} ${await res.text()}`);
+        }
+
+        const result = await res.json();
+        console.log(`[createContentItem] Success.`);
+        return result;
+    } catch (error: any) {
+        console.error('Failed to create content item via XM Apps API:', error);
+        throw error;
+    }
+}
+
+export async function updateContent(params: { id: string; language: string; fields: Record<string, unknown> }, accessToken: string) {
+     try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/content/${params.id}`;
+        
+        console.log(`[updateContent] Updating content item '${params.id}'`);
+        
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                language: params.language, // API expects this at root
+                // The API shape is slightly fluid, but typically PUT /content/{id} expects fields/language/version
+                fields: params.fields
+            })
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to update content item: ${res.status} ${await res.text()}`);
+        }
+
+        const result = await res.json();
+        console.log(`[updateContent] Success.`);
+        return result;
+    } catch (error: any) {
+        console.error('Failed to update content item via XM Apps API:', error);
+        throw error;
+    }
+}
+
+export async function deleteContent(itemId: string, accessToken: string) {
+     try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/content/${itemId}`;
+        
+        console.log(`[deleteContent] Deleting content item '${itemId}'`);
+        
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                Authorization: `Bearer ${accessToken}`
+            }
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to delete content item: ${res.status} ${await res.text()}`);
+        }
+
+        const result = await res.json();
+        console.log(`[deleteContent] Success.`);
+        return result;
+    } catch (error: any) {
+        console.error('Failed to delete content item via XM Apps API:', error);
+        throw error;
+    }
+}
+
+export async function getSitesList(accessToken: string) {
+    try {
+       const agentBaseUrl = getAgentApiBaseUrl();
+       const url = `${agentBaseUrl}/api/v1/sites`;
+       
+       console.log(`[getSitesList] Listing all sites`);
+       
+       const res = await fetch(url, {
+           headers: {
+               Authorization: `Bearer ${accessToken}`
+           }
+       });
+  
+       if (!res.ok) {
+           throw new Error(`Failed to list sites: ${res.status} ${await res.text()}`);
+       }
+  
+       const data = await res.json();
+       console.log(`[getSitesList] Success. Found ${data.length} sites.`);
+       return data;
+    } catch (error: any) {
+      console.error('Failed to list sites via XM Apps API:', error);
+      throw error;
+    }
+}
+
+// --- New SDK Wrappers for Site Collections, Favorites, Languages, Aggregation, Jobs ---
+
+export async function listSiteCollections(accessToken: string) {
+  const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+  // @ts-ignore - SDK types might not be perfectly inferred
+  return await xmc.sites.listCollections({});
+}
+
+export async function getFavoriteSites(accessToken: string) {
+  const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+  // @ts-ignore
+  return await xmc.sites.getFavoriteSites({});
+}
+
+export async function listLanguages(accessToken: string) {
+    // client.sites.listLanguages
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.listLanguages({});
+}
+
+export async function aggregatePageData(siteId: string, pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.aggregatePageData({ siteId, pageId, language });
+}
+
+export async function listJobs(accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.listJobs({});
+}
+
+// ==========================================
+// COMPREHENSIVE SDK WRAPPERS
+// ==========================================
+
+// --- Agent API Additional Wrappers ---
+
+export async function getAssetInformation(assetId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.assetsGetAssetInformation({ assetId, language });
+}
+
+export async function searchAssets(query: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.assetsSearchAssets({ query, language });
+}
+
+// NOTE: assetsUploadAsset and assetsUpdateAsset are handled by custom functions at top of file, 
+// ensuring we use the correct FormData logic.
+
+export async function createComponentDatasource(name: string, templateId: string, locationId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.componentsCreateComponentDatasource({ name, templateId, locationId, language });
+}
+
+export async function searchComponentDatasources(query: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.componentsSearchComponentDatasources({ query, language });
+}
+
+export async function listAvailableInsertOptions(itemId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.contentListAvailableInsertoptions({ itemId, language });
+}
+
+export async function addLanguageToPage(pageId: string, language: string, version: number, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.pagesAddLanguageToPage({ pageId, language, version });
+}
+
+export async function getPagePreviewUrl(pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.pagesGetPagePreviewUrl({ pageId, language });
+}
+
+export async function getPageScreenshot(pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.pagesGetPageScreenshot({ pageId, language });
+}
+
+export async function setComponentDatasource(pageId: string, componentId: string, datasourceId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.pagesSetComponentDatasource({ pageId, componentId, datasourceId, language });
+}
+
+export async function createPersonalizationVersion(pageId: string, conditionId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.personalizationCreatePersonalizationVersion({ pageId, conditionId, language });
+}
+
+export async function getPersonalizationVersionsByPage(pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.personalizationGetPersonalizationVersionsByPage({ pageId, language });
+}
+
+export async function getSiteDetails(siteName: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.sitesGetSiteDetails({ siteName });
+}
+
+// --- Pages API Additional Wrappers ---
+
+export async function duplicatePage(pageId: string, newName: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.pages.duplicatePage({ pageId, newName, language });
+}
+
+export async function renamePage(pageId: string, newName: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.pages.renamePage({ pageId, name: newName, language }); // Note property key might be 'name' based on common patterns
+}
+
+export async function addPageVersion(pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.pages.addPageVersion({ pageId, language });
+}
+
+// --- Sites API Additional Wrappers ---
+
+export async function createSite(name: string, templateId: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.createSite({ name, templateId });
+}
+
+export async function deleteSite(siteId: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.deleteSite({ siteId });
+}
+
+export async function listPageChildren(itemId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.listPageChildren({ itemId, language });
+}
+
+
+// --- Comprehensive Site Management Wrappers ---
+
+export async function getFavoriteSiteTemplates(accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.getFavoriteSiteTemplates({});
+}
+
+export async function listSiteTemplates(accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.listSiteTemplates({});
+}
+
+export async function getRenderingHosts(accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.getRenderingHosts({});
+}
+
+export async function createHost(name: string, hostName: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.createHost({ name, hostName });
+}
+
+export async function createCollection(name: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.createCollection({ name });
+}
+
+export async function deleteCollection(collectionId: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.deleteCollection({ collectionId });
+}
+
+export async function createLanguage(name: string, code: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.createLanguage({ name, code });
+}
+
+export async function deleteLanguage(language: string, accessToken: string) {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.sites.deleteLanguage({ language });
+}
+
+// --- Personalization Wrappers ---
+
+export async function getConditionTemplates(accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.personalizationGetConditionTemplates({ language });
+}
+
+export async function getConditionTemplateById(templateId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.personalizationGetConditionTemplateById({ templateId, language });
+}
+
+// --- Page Service Wrappers ---
+
+export async function retrievePageVersions(pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.pages.retrievePageVersions({ pageId, language });
+}
+
+export async function getLivePageState(pageId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.pages.getLivePageState({ pageId, language });
+}
+
+export async function saveLayout(pageId: string, layout: any, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.pages.saveLayout({ pageId, layout, language });
+}
+
+export async function getPageTemplateById(templateId: string, accessToken: string, language: string = 'en') {
+    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
+    // @ts-ignore
+    return await xmc.agent.pagesGetPageTemplateById({ templateId, language });
+}
+
+
+
+
+
+
+
+

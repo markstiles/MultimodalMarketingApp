@@ -12,7 +12,36 @@ import {
   uploadAssetViaAgentApi, 
   updateAssetViaAgentApi,
   getAllPagesForSite,
-  getClientCredentialsJwt
+  getComponentsOnPage,
+  getAllowedComponents,
+  getPage,
+  getPageHtml,
+  getPagePathByUrl,
+  searchSite,
+  listComponents,
+  getComponent,
+  getClientCredentialsJwt,
+  createPage,
+  addComponentOnPage,
+  createContentItem,
+  updateContent,
+  deleteContent,
+  getSitesList,
+  listSiteCollections,
+  getFavoriteSites,
+  listLanguages,
+  aggregatePageData,
+  listJobs,
+  searchAssets,
+  createComponentDatasource,
+  getPagePreviewUrl,
+  setComponentDatasource,
+  duplicatePage,
+  listPageChildren,
+  listSiteTemplates,
+  getRenderingHosts,
+  retrievePageVersions,
+  getConditionTemplates
 } from '@/lib/sitecore/agent-api';
 import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/utils/db-errors';
 import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
@@ -620,26 +649,27 @@ export async function POST(req: NextRequest) {
                 let effectiveToolName = accumulated.name;
                 let effectiveArgs: any = args;
                 if (accumulated.name === 'update_content') {
-                  const updatedFields = (args as any)?.updatedFields;
+                  const updatedFields = (args as any)?.updatedFields || (args as any)?.fields;
                   const keys = updatedFields && typeof updatedFields === 'object' ? Object.keys(updatedFields) : [];
                   if (!updatedFields || keys.length === 0) {
-                    console.warn(
-                      '[Marketer MCP] update_content called without updatedFields; this will not change any field values. Use update_fields_on_content_item for field updates.'
-                    );
+                    // It is valid to call update_content without fields if other props (like version) are updated,
+                    // but usually we expect fields. We'll strict check in the guardrail below if intended for Marketer MCP field updates.
                   } else {
-                    debugLog('[Marketer MCP] update_content provided updatedFields keys:', keys);
+                    debugLog('[Marketer MCP] update_content provided fields keys:', keys);
                     const fieldUpdateTool = getMarketerToolByName('update_fields_on_content_item');
                     if (fieldUpdateTool) {
                       effectiveToolName = 'update_fields_on_content_item';
-                      effectiveArgs = buildFieldUpdateArgs(args, fieldUpdateTool);
+                      // If 'fields' key is used, map it to 'updatedFields' for the specialized tool if needed
+                      const remappedArgs = { ...args };
+                      if ((args as any).fields && !(args as any).updatedFields) {
+                          remappedArgs.updatedFields = (args as any).fields;
+                          delete (remappedArgs as any).fields;
+                      }
+                      effectiveArgs = buildFieldUpdateArgs(remappedArgs, fieldUpdateTool);
                       debugLog(
-                        '[Marketer MCP] Rerouting update_content(updatedFields) -> update_fields_on_content_item to actually update field values.'
+                        '[Marketer MCP] Rerouting update_content(fields) -> update_fields_on_content_item to actually update field values.'
                       );
-                    } else {
-                      console.warn(
-                        '[Marketer MCP] update_fields_on_content_item tool not available; proceeding with update_content but field updates may not apply.'
-                      );
-                    }
+                    } 
                   }
                 }
 
@@ -663,16 +693,16 @@ export async function POST(req: NextRequest) {
                 // Guardrail: if the model calls update_content without updatedFields while trying to change fields,
                 // fail fast with guidance to use update_fields_on_content_item.
                 if (accumulated.name === 'update_content') {
-                  const updatedFields = (args as any)?.updatedFields;
+                  const updatedFields = (args as any)?.updatedFields || (args as any)?.fields;
                   const keys = updatedFields && typeof updatedFields === 'object' ? Object.keys(updatedFields) : [];
                   if (!updatedFields || keys.length === 0) {
-                    console.warn('[Marketer MCP] Blocking update_content call without updatedFields');
+                    console.warn('[Marketer MCP] Blocking update_content call without fields');
                     toolResults.push({
                       role: 'tool',
                       tool_call_id: accumulated.id,
                       content: JSON.stringify({
                         error:
-                          'To change field values, use update_fields_on_content_item with explicit field data (e.g., { fields: { text: "<p>...</p>" } }). update_content alone typically updates the item/version metadata only.',
+                          'Update failed: No fields provided. To update content, please provide the "fields" parameter with key-value pairs (e.g., { fields: { title: "New Title" } }).',
                       }),
                     });
                     continue;
@@ -787,7 +817,17 @@ export async function POST(req: NextRequest) {
                 if (accumulated.name === 'get_host_user') {
                   // Fallback to metadata if direct context is missing
                   const meta = conversation.metadata as any;
-                  const result = hostUser || meta?.hostUser || { error: 'Host user information not available' };
+                  const rawUser = hostUser || meta?.hostUser;
+                  
+                  let result;
+                  if (rawUser) {
+                      // Filter for specific fields as requested to provide cleaner context
+                      const { given_name, family_name, email } = rawUser;
+                      result = { given_name, family_name, email };
+                  } else {
+                      result = { error: 'Host user information not available' };
+                  }
+
                   toolResults.push({
                     role: 'tool',
                     tool_call_id: accumulated.id,
@@ -833,19 +873,936 @@ export async function POST(req: NextRequest) {
                   continue;
                 }
 
-                if (accumulated.name === 'execute_client_mutation') {
-                  emit({ 
-                    type: 'client_action', 
-                    action: 'execute_mutation', 
-                    data: { mutation: args.mutation, payload: args.payload } 
-                  });
-                  const result = { success: true, message: `Executing mutation ${args.mutation}...` };
-                  toolResults.push({
-                    role: 'tool',
-                    tool_call_id: accumulated.id,
-                    content: JSON.stringify(result),
-                  });
-                  mcpCalls.push({ tool: accumulated.name, args, result });
+
+                if (accumulated.name === 'get_page_components') {
+                  emit({ type: 'status', message: 'Fetching page components...' });
+                  try {
+                    const reqPageId = (args as any).pageId || currentPageId || '';
+                    const language = (args as any).language || 'en';
+                    
+                    if (!reqPageId) {
+                         throw new Error('No page ID provided or found in context.');
+                    }
+
+                    // Auth Strategy: Try Service configured first, then User Token (DB), then fail.
+                    let componentsResult = null;
+                    let serviceAuthFailed = false;
+
+                    // 1. Service Credentials
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) {
+                                componentsResult = await getComponentsOnPage(reqPageId, language, svcToken);
+                            }
+                         } catch (err: any) {
+                             console.warn('[get_page_components] Service Credential Token failed:', err.message);
+                             serviceAuthFailed = true;
+                         }
+                    }
+
+                    // 2. User Context
+                    if (!componentsResult) {
+                        let userToken: string | null = null;
+                        const contextToken = (applicationContext as any)?.auth?.accessToken;
+                        if (contextToken) userToken = contextToken;
+                        
+                        if (!userToken) {
+                            const tokenEntry = await prisma.oAuthToken.findUnique({ where: { userId } });
+                            if (tokenEntry && tokenEntry.accessToken && tokenEntry.expiresAt >= new Date()) {
+                                userToken = tokenEntry.accessToken;
+                            }
+                        }
+
+                        if (!userToken) {
+                            throw new Error(`Authentication required to view components.`);
+                        }
+
+                        componentsResult = await getComponentsOnPage(reqPageId, language, userToken);
+                    }
+                    
+                    const result = { components: componentsResult };
+                    
+                    toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify(result),
+                    });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                    
+                  } catch (err: any) {
+                    const result = { error: err.message || String(err) };
+                     toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify(result),
+                    });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+
+                if (accumulated.name === 'get_allowed_components') {
+                  emit({ type: 'status', message: 'Fetching allowed components...' });
+                  try {
+                    const reqPageId = (args as any).pageId || currentPageId;
+                    const ph = (args as any).placeholderName;
+                    const language = (args as any).language || 'en';
+                    
+                    if (!reqPageId) throw new Error('No page ID provided.');
+                    if (!ph) throw new Error('No placeholder name provided.');
+
+                    let resultData = null;
+                    // Strategy: Service Auth -> User Auth
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await getAllowedComponents(reqPageId, ph, language, svcToken);
+                         } catch (err: any) { console.warn('[get_allowed_components] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await getAllowedComponents(reqPageId, ph, language, userToken);
+                    }
+                    
+                    const result = { allowedComponents: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'get_page') {
+                  emit({ type: 'status', message: 'Fetching page info...' });
+                  try {
+                    const reqPageId = (args as any).pageId;
+                    const language = (args as any).language || 'en';
+                    if (!reqPageId) throw new Error('No page ID provided.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await getPage(reqPageId, language, svcToken);
+                         } catch (err: any) { console.warn('[get_page] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await getPage(reqPageId, language, userToken);
+                    }
+                    
+                    const result = { page: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'get_page_html') {
+                  emit({ type: 'status', message: 'Fetching page HTML...' });
+                  try {
+                    const reqPageId = (args as any).pageId;
+                    const language = (args as any).language || 'en';
+                    if (!reqPageId) throw new Error('No page ID provided.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await getPageHtml(reqPageId, language, svcToken);
+                         } catch (err: any) { console.warn('[get_page_html] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await getPageHtml(reqPageId, language, userToken);
+                    }
+                    // Truncate huge HTML if needed, but usually we want it all for analysis. 
+                    // Warning: massive HTML can blow up context window.
+                    const result = { html: resultData }; 
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'get_path_by_url') {
+                  emit({ type: 'status', message: 'Resolving URL...' });
+                  try {
+                    const url = (args as any).url;
+                    if (!url) throw new Error('No URL provided.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await getPagePathByUrl(url, svcToken);
+                         } catch (err: any) { console.warn('[get_path_by_url] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await getPagePathByUrl(url, userToken);
+                    }
+                    
+                    const result = resultData;
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+
+                if (accumulated.name === 'search_site') {
+                  emit({ type: 'status', message: 'Searching site pages...' });
+                  try {
+                    const reqSiteName = (args as any).siteName || siteName;
+                    const query = (args as any).query;
+                    const language = (args as any).language || 'en';
+                    
+                    if (!reqSiteName) throw new Error('No site name provided or found.');
+                    if (!query) throw new Error('No search query provided.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await searchSite(reqSiteName, query, language, svcToken);
+                         } catch (err: any) { console.warn('[search_site] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await searchSite(reqSiteName, query, language, userToken);
+                    }
+                    
+                    const result = { results: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'list_components') {
+                  emit({ type: 'status', message: 'Listing components...' });
+                  try {
+                    const reqSiteName = (args as any).siteName || siteName;
+                    if (!reqSiteName) throw new Error('No site name provided or found.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await listComponents(reqSiteName, svcToken);
+                         } catch (err: any) { console.warn('[list_components] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await listComponents(reqSiteName, userToken);
+                    }
+                    
+                    const result = { components: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'get_component') {
+                  emit({ type: 'status', message: 'Getting component details...' });
+                  try {
+                    const componentName = (args as any).componentName;
+                    if (!componentName) throw new Error('No component name provided.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await getComponent(componentName, svcToken);
+                         } catch (err: any) { console.warn('[get_component] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await getComponent(componentName, userToken);
+                    }
+                    
+                    const result = { component: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                // --- NEW WRITE TOOLS ---
+
+                if (accumulated.name === 'list_sites') {
+                  emit({ type: 'status', message: 'Listing sites...' });
+                  try {
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            // Pass empty params as getSitesList doesn't usually filter by siteName/query at top level mostly
+                            if (svcToken) resultData = await getSitesList(svcToken);
+                         } catch (err: any) { console.warn('[list_sites] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await getSitesList(userToken);
+                    }
+                    
+                    const result = { sites: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'list_site_collections') {
+                    emit({ type: 'status', message: 'Listing site collections...' });
+                    try {
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await listSiteCollections(svcToken);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                            const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                            (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            if (!userToken) throw new Error('Authentication required.');
+                            resultData = await listSiteCollections(userToken);
+                        }
+                        const result = { collections: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'get_favorite_sites') {
+                    emit({ type: 'status', message: 'Fetching favorite sites...' });
+                    try {
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await getFavoriteSites(svcToken);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                            const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                            (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            if (!userToken) throw new Error('Authentication required.');
+                            resultData = await getFavoriteSites(userToken);
+                        }
+                        const result = { favorites: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'list_languages') {
+                    emit({ type: 'status', message: 'Listing languages...' });
+                    try {
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await listLanguages(svcToken);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                            const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                            (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            if (!userToken) throw new Error('Authentication required.');
+                            resultData = await listLanguages(userToken);
+                        }
+                        const result = { languages: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'aggregate_page_data') {
+                    emit({ type: 'status', message: 'Aggregating page data...' });
+                    try {
+                        const { siteId, pageId } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!siteId || !pageId) throw new Error('Missing siteId or pageId');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await aggregatePageData(siteId, pageId, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                            const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                            (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            if (!userToken) throw new Error('Authentication required.');
+                            resultData = await aggregatePageData(siteId, pageId, userToken, language);
+                        }
+                        const result = { aggregation: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'list_jobs') {
+                    emit({ type: 'status', message: 'Listing jobs...' });
+                    try {
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await listJobs(svcToken);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                            const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                            (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            if (!userToken) throw new Error('Authentication required.');
+                            resultData = await listJobs(userToken);
+                        }
+                        const result = { jobs: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'search_assets') {
+                    emit({ type: 'status', message: 'Searching assets...' });
+                    try {
+                        const { query } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!query) throw new Error('Missing query');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await searchAssets(query, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await searchAssets(query, userToken, language);
+                        }
+                        const result = { assets: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'duplicate_page') {
+                    emit({ type: 'status', message: 'Duplicating page...' });
+                    try {
+                        const { pageId, newName } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!pageId || !newName) throw new Error('Missing args');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await duplicatePage(pageId, newName, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await duplicatePage(pageId, newName, userToken, language);
+                        }
+                        const result = { success: true, data: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'get_page_preview_url') {
+                    emit({ type: 'status', message: 'Getting preview URL...' });
+                    try {
+                        const { pageId } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!pageId) throw new Error('Missing pageId');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await getPagePreviewUrl(pageId, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await getPagePreviewUrl(pageId, userToken, language);
+                        }
+                        const result = { url: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'create_component_datasource') {
+                    emit({ type: 'status', message: 'Creating datasource...' });
+                    try {
+                        const { name, templateId, locationId } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!name || !templateId || !locationId) throw new Error('Missing args');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await createComponentDatasource(name, templateId, locationId, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await createComponentDatasource(name, templateId, locationId, userToken, language);
+                        }
+                        const result = { success: true, data: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'set_component_datasource') {
+                    emit({ type: 'status', message: 'Setting component datasource...' });
+                    try {
+                        const { pageId, componentId, datasourceId } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!pageId || !componentId || !datasourceId) throw new Error('Missing args');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await setComponentDatasource(pageId, componentId, datasourceId, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await setComponentDatasource(pageId, componentId, datasourceId, userToken, language);
+                        }
+                        const result = { success: true, data: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'list_page_children') {
+                    emit({ type: 'status', message: 'Listing page children...' });
+                    try {
+                        const { itemId } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!itemId) throw new Error('Missing itemId');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await listPageChildren(itemId, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await listPageChildren(itemId, userToken, language);
+                        }
+                        const result = { children: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'list_site_templates') {
+                    emit({ type: 'status', message: 'Listing site templates...' });
+                    try {
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await listSiteTemplates(svcToken);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await listSiteTemplates(userToken);
+                        }
+                        const result = { templates: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'get_rendering_hosts') {
+                    emit({ type: 'status', message: 'Getting rendering hosts...' });
+                    try {
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await getRenderingHosts(svcToken);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await getRenderingHosts(userToken);
+                        }
+                        const result = { hosts: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'list_page_versions') {
+                    emit({ type: 'status', message: 'Retrieving page versions...' });
+                    try {
+                        const { pageId } = args as any;
+                        const language = (args as any).language || 'en';
+                        if (!pageId) throw new Error('Missing pageId');
+
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await retrievePageVersions(pageId, svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await retrievePageVersions(pageId, userToken, language);
+                        }
+                        const result = { versions: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'get_condition_templates') {
+                    emit({ type: 'status', message: 'Getting condition templates...' });
+                    try {
+                        const language = (args as any).language || 'en';
+                        let resultData = null;
+                        if (hasAgentApiCredentialsConfigured()) {
+                            try {
+                                const svcToken = await getClientCredentialsJwt();
+                                if (svcToken) resultData = await getConditionTemplates(svcToken, language);
+                            } catch (err: any) { console.warn('Service Auth failed:', err.message); }
+                        }
+                        if (!resultData) {
+                             const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                              (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                             if (!userToken) throw new Error('Authentication required.');
+                             resultData = await getConditionTemplates(userToken, language);
+                        }
+                        const result = { conditions: resultData };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    } catch (err: any) {
+                        const result = { error: err.message };
+                        toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                        mcpCalls.push({ tool: accumulated.name, args, result });
+                    }
+                    continue;
+                }
+
+                if (accumulated.name === 'add_component_on_page') {
+                  emit({ type: 'status', message: 'Adding component to page...' });
+                  try {
+                    const { pageId, componentName, placeholderName } = args as any;
+                    const language = (args as any).language || 'en';
+                    
+                    if (!pageId || !componentName || !placeholderName) throw new Error('Missing required arguments.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await addComponentOnPage(pageId, componentName, placeholderName, language, svcToken);
+                         } catch (err: any) { console.warn('[add_component_on_page] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await addComponentOnPage(pageId, componentName, placeholderName, language, userToken);
+                    }
+                    
+                    const result = { success: true, data: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'create_page') {
+                  emit({ type: 'status', message: 'Creating page...' });
+                  try {
+                    const { parentId, templateId, name } = args as any;
+                    const language = (args as any).language || 'en';
+                    
+                    if (!parentId || !templateId || !name) throw new Error('Missing required arguments.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await createPage(parentId, templateId, name, language, svcToken);
+                         } catch (err: any) { console.warn('[create_page] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await createPage(parentId, templateId, name, language, userToken);
+                    }
+                    
+                    const result = { success: true, data: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'create_content_item') {
+                  emit({ type: 'status', message: 'Creating content item...' });
+                  try {
+                    const { parentId, templateId, name } = args as any;
+                    const language = (args as any).language || 'en';
+                    
+                    if (!parentId || !templateId || !name) throw new Error('Missing required arguments.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await createContentItem({ parentId, templateId, name, language }, svcToken);
+                         } catch (err: any) { console.warn('[create_content_item] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await createContentItem({ parentId, templateId, name, language }, userToken);
+                    }
+                    
+                    const result = { success: true, data: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'update_content') {
+                  emit({ type: 'status', message: 'Updating content...' });
+                  try {
+                    const { id, fields } = args as any;
+                    const language = (args as any).language || 'en';
+                    
+                    if (!id || !fields) throw new Error('Missing required arguments.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await updateContent({ id, fields, language }, svcToken);
+                         } catch (err: any) { console.warn('[update_content] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await updateContent({ id, fields, language }, userToken);
+                    }
+                    
+                    const result = { success: true, data: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'delete_content') {
+                  emit({ type: 'status', message: 'Deleting content...' });
+                  try {
+                    const { itemId } = args as any;
+                    
+                    if (!itemId) throw new Error('Missing required arguments.');
+
+                    let resultData = null;
+                    if (hasAgentApiCredentialsConfigured()) {
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) resultData = await deleteContent(itemId, svcToken);
+                         } catch (err: any) { console.warn('[delete_content] Service Auth failed:', err.message); }
+                    }
+                    if (!resultData) {
+                         const userToken = (applicationContext as any)?.auth?.accessToken || 
+                                          (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                         if (!userToken) throw new Error('Authentication required.');
+                         resultData = await deleteContent(itemId, userToken);
+                    }
+                    
+                    const result = { success: true, data: resultData };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
                   continue;
                 }
 

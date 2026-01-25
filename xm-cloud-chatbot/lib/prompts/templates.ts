@@ -35,6 +35,12 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
 
   When the user asks what page they are on, respond with currentPageName and siteName only. Do not include currentPagePath unless explicitly asked, and only mention currentPageId if explicitly asked.
 
+  ## Retrieval & Listing Instructions
+  When the user asks you to retrieve or list items (such as "what components are on this page", "find pages about X", or "list all sites"):
+  1. INITIALLY: Provide a concise list containing ONLY the *Names* or *Titles* of the items. Do NOT list IDs, datasources, placeholders, paths, or other properties unless the user explicitly requested them.
+  2. DEEPER PROBING: If the user asks for more details about a specific item or the list in general (e.g., "tell me more about the Hero component", "show me the datasources"), THEN provide the full details (Datasource ID, Placeholder, Parameters, etc.).
+  3. This progressive disclosure keeps the chat clean and readable.
+
   CRITICAL NAVIGATION RULES - READ THIS FIRST:
   1. When asked to "navigate to", "open", "switch to", or "go to" a page, you MUST find the *internal Item ID* of that page.
   2. You can use the 'get_all_pages_by_site' tool to list pages and find the correct ID so you can call 'navigate_to_page'.
@@ -355,20 +361,20 @@ export const ASSISTANT_TEMPLATES: Record<AssistantType, AssistantConfig> = {
         The format for external links is: <link linktype="external" url="{{fully_qualified_url}}" target="" text="" title="" class=""/>
 
       Important: there is a difference between updating a content item record/version and updating the field values on that item.
-      - "update_content" is typically for updating the item record/version metadata (and may create a new version), but it often does NOT change field values.
-      - "update_fields_on_content_item" is for actually writing field values (e.g., Rich Text body, titles, CTAs).
+      - "update_fields_on_content_item" is the PRIMARY and PREFERRED tool for writing field values (e.g., Rich Text body, titles, CTAs) if available. Use this for content updates.
+      - "update_content" is a fallback tool that can update item fields and version data. It requires a 'fields' parameter in its definition.
 
       If you want text on the page to change, you must:
       1) Identify the component instance on the page and its datasource itemId/path
-      2) Update the datasource item's fields using update_fields_on_content_item (preferred for field writes)
-      3) Verify by fetching the datasource item again (get_content_item_by_id/path)
+      2) Fetch the datasource item using get_content_item (or similar) to INSPECT the available field names (e.g. "Headline", "Text", "RichText"). DO NOT GUESS field names.
+      3) Update the datasource item's fields using update_fields_on_content_item (or update_content if the specialized tool is unavailable), using the EXACT field names found in step 2.
+      4) Verify by fetching the datasource item again.
 
-      When updating fields, you must include the actual field values you want to set. For Rich Text, this is often a field like "text" or "Text".
-      Prefer:
-      - update_fields_on_content_item({ itemId, siteName, language: "en", fields: { text: "<p>...</p>" } })
-      If a field write fails or doesn't change, re-fetch the item, inspect its available fields, and retry with the correct field key.
+      When updating fields, you must include the actual field values you want to set.
+      Example: If you see the item has a field "ContentBody", use:
+      - update_fields_on_content_item({ itemId: itemId, language: "en", fields: { ContentBody: "<p>...</p>" } })
 
-      Use update_content only when you specifically need to create/update the item/version metadata (for example, creating a new version), and do not assume it wrote field values unless the tool schema explicitly supports field payloads.
+      Use update_content only when you need to create/update the item version or if update_fields_on_content_item is not available. Do NOT call either tool without a 'fields' object containing the specific data to write.
 
       ${getMCPToolsDescription()}
 
