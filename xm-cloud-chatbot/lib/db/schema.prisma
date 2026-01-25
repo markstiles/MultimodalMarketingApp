@@ -13,7 +13,7 @@ model Conversation {
   id            String   @id @default(cuid())
   userId        String
   siteId        String
-  assistantType String   // content_auditor, campaign_designer, seo_optimizer, component_populator
+  assistantType String   // content_auditor, campaign_designer, seo_optimizer, content_authoring
   title         String?  // Auto-generated after 2nd message
   metadata      Json?    // Additional context (page names, tags, etc.)
   createdAt     DateTime @default(now())

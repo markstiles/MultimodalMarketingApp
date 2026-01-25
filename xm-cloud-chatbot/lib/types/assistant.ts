@@ -5,7 +5,7 @@ export type AssistantType =
   | 'campaign_designer'
   | 'seo_optimizer'
   | 'asset_manager'
-  | 'component_populator';
+  | 'content_authoring';
 
 export interface AssistantConfig {
   type: AssistantType;
@@ -14,7 +14,6 @@ export interface AssistantConfig {
   systemPrompt: string;
   intentKeywords: string[];
   color: string;
-  icon: string;
   examplePrompts: string[];
 }
 

@@ -10,23 +10,30 @@ export default function EditorPanelPage() {
   const { client, error, isInitialized } = useMarketplaceClient();
   const [appContext, setAppContext] = useState<ApplicationContext>();
   const [pagesContext, setPagesContext] = useState<PagesContext>();
+  const [siteContext, setSiteContext] = useState<any>();
   const [userInfo, setUserInfo] = useState<UserInfo>();
   const [selectedAsset, setSelectedAsset] = useState<MediaAssetContext | undefined>();
   const [selectedComponentId, setSelectedComponentId] = useState<string | undefined>();
   
-  // Consider the panel ready once the Marketplace contexts are present.
-  const isReady = !!(appContext?.id && pagesContext?.siteInfo?.id && pagesContext?.pageInfo?.id && userInfo?.id);
-  const [isStandalone, setIsStandalone] = useState(false);
+  // Consider the panel ready once the Marketplace contexts are initialized.
+  // We relax strict checks for complete context because we might be in scenarios
+  // where full context (like pageInfo) isn't available yet (e.g. dashboard).
+  const isReady = isInitialized && !!appContext?.id;
 
   useEffect(() => {
-    setIsStandalone(window.parent === window);
-
     if (!error && isInitialized && client) {
       console.log("Marketplace client initialized successfully.");
       // Make a query to retrieve the application context
       client.query("application.context")
         .then((res) => {
           console.log("Success retrieving application.context:", res.data);
+          // DEBUG: Check for auth token presence
+          const auth = (res.data as any)?.auth;
+          if (auth?.accessToken) {
+             console.log("DEBUG: Found AccessToken in application.context via SDK.");
+          } else {
+             console.log("DEBUG: No AccessToken found in application.context via SDK. Keys:", Object.keys(res.data || {}));
+          }
           setAppContext(res.data);
         })
         .catch((error) => {
@@ -75,11 +82,15 @@ export default function EditorPanelPage() {
         onSuccess: (data) => {
           console.log('Page has been updated:', data);
           setPagesContext(data);
+          // Always use the available siteInfo from pagesContext as siteContext
+          setSiteContext((data as any)?.siteInfo);
         },
       })
         .then((res) => {
           console.log("Success retrieving pages.context:", res.data);
           setPagesContext(res.data);
+          // Always use the available siteInfo from pagesContext as siteContext
+          setSiteContext((res.data as any)?.siteInfo);
         })
         .catch((error) => {
           console.error("Error retrieving pages.context:", error);
@@ -149,11 +160,40 @@ export default function EditorPanelPage() {
     }
   };
 
+  const onReloadCanvas = () => {
+    if (client) {
+      console.log('Reloading canvas via Marketplace SDK...');
+      client.mutate("pages.reloadCanvas");
+    } else {
+      console.warn('Cannot reload canvas: Client not initialized');
+    }
+  };
+
+  const onNavigateToPage = (itemId: string) => {
+    if (client) {
+      console.log(`Navigating to page ${itemId} via Marketplace SDK...`);
+      client.mutate("pages.context", { params: { itemId } });
+    } else {
+      console.warn('Cannot navigate: Client not initialized');
+    }
+  };
+
+  const onExecuteMutation = (mutation: string, payload?: any) => {
+    if (client) {
+       console.log(`Executing mutation ${mutation} via Marketplace SDK...`, payload);
+       client.mutate(mutation, payload);
+    } else {
+       console.warn(`Cannot execute mutation ${mutation}: Client not initialized`);
+    }
+  };
+
+  // const loadMockContext = ... (REMOVED)
+
   const environmentHost =
     process.env.NEXT_PUBLIC_ENVIRONMENT_HOST ||
     process.env.NEXT_PUBLIC_SITECORE_ENVIRONMENT_NAME;
 
-  if (!isReady || !appContext || !pagesContext || !userInfo) {
+  if (!isReady || !appContext || !userInfo) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50">
         <div className="text-center">
@@ -162,14 +202,6 @@ export default function EditorPanelPage() {
                <p className="font-bold">Connection Error</p>
                <p className="text-sm">{error.message}</p>
              </div>
-          ) : isStandalone ? (
-            <div className="text-amber-600 mb-4 max-w-md">
-              <p className="font-bold text-lg mb-2">Standalone Mode Detected</p>
-              <p className="text-sm text-gray-700">
-                This application is running outside of the Sitecore Pages Editor and the mock context has been disabled.
-                To use the chatbot, please open this page within Sitecore Pages or enable mock context for local development.
-              </p>
-            </div>
           ) : (
             <>
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -180,6 +212,9 @@ export default function EditorPanelPage() {
           <div className="mt-8 text-left text-xs text-gray-400 bg-gray-100 p-4 rounded border border-gray-200">
             <p className="font-semibold mb-2">Connection Diagnostics:</p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <span>Environment:</span>
+              <span className="text-gray-600 font-mono">{environmentHost || '(Not Set)'}</span>
+
               <span>SDK Initialized:</span>
               <span className={isInitialized ? "text-green-600" : "text-amber-600"}>{isInitialized ? "Yes" : "Pending..."}</span>
               
@@ -195,9 +230,15 @@ export default function EditorPanelPage() {
               <span>User Context:</span>
               <span className={userInfo?.id ? "text-green-600" : "text-amber-600"}>{userInfo?.id ? "Ready" : "Waiting"}</span>
             </div>
+            {!isInitialized && (
+              <p className="mt-4 text-gray-500 italic">
+                Note: This application must be loaded within the Sitecore XM Cloud Pages Editor to function correctly.
+              </p>
+            )}
           </div>
         </div>
       </div>
+
     );
   }
 
@@ -206,11 +247,15 @@ export default function EditorPanelPage() {
       <ChatPanel
         applicationContext={appContext}
         pagesContext={pagesContext}
+        siteContext={siteContext}
         user={userInfo}
         environmentHost={environmentHost}
         selectedAsset={selectedAsset}
         selectedComponentId={selectedComponentId}
         onSendToEditor={sendToEditor}
+        onReloadCanvas={onReloadCanvas}
+        onNavigateToPage={onNavigateToPage}
+        onExecuteMutation={onExecuteMutation}
       />
     </div>
   );

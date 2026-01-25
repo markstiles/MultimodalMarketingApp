@@ -37,6 +37,10 @@
     * users can choose, view or improve images
     * make models easy to change out
     * convert content to audio (blogcast)
+
+when i make a request for the page context, the amount of information for the initial request is too much. the name of the page is fine. The site, id and path and url should be available but not surfaced unless requested
+
+
 * content 
     * is the content good enough on clarity or should we use velir.com 
     * create content in sitecore for site-specific brand voice

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { AssistantType } from '@/lib/types/assistant';
-import { ASSISTANT_TEMPLATES } from '@/lib/prompts/templates';
+import { ASSISTANT_TEMPLATES, getDefaultAssistantType } from '@/lib/prompts/templates';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -23,7 +23,7 @@ export async function classifyIntent(
     trimmed
   );
   if (looksLikeGreetingOnly && (!conversationHistory || conversationHistory.length === 0)) {
-    const fallbackType = currentAssistantType || 'content_auditor';
+    const fallbackType = currentAssistantType || getDefaultAssistantType();
     return {
       assistantType: fallbackType,
       confidence: 10,
@@ -43,6 +43,10 @@ ${Object.entries(ASSISTANT_TEMPLATES).map(([type, config]) =>
   `- ${type}: ${config.description}\n  Keywords: ${config.intentKeywords.join(', ')}`
 ).join('\n')}
 
+CRITICAL RULE:
+- "Opening a page", "Going to a page", "Navigating to", or "Editing a page" requests are ALWAYS classified as 'content_authoring'.
+- NEVER classify page navigation requests as 'asset_manager'.
+
 Analyze the user's message${conversationHistory ? ' and recent conversation context' : ''} to determine:
 1. Which assistant type best matches their intent
 2. Your confidence level (0-100)
@@ -52,7 +56,7 @@ ${currentAssistantType ? `Current assistant type is: ${currentAssistantType}. On
 
 Respond with a JSON object in this format:
 {
-  "assistantType": "content_auditor|campaign_designer|seo_optimizer|asset_manager|component_populator",
+  "assistantType": "content_auditor|campaign_designer|seo_optimizer|asset_manager|content_authoring",
   "confidence": 85,
   "reasoning": "Brief explanation of why this type was chosen"
 }`
@@ -115,7 +119,7 @@ function fallbackIntentClassification(
     campaign_designer: 0,
     seo_optimizer: 0,
     asset_manager: 0,
-    component_populator: 0
+    content_authoring: 0
   };
 
   // Score each assistant type based on keyword matches
@@ -129,7 +133,7 @@ function fallbackIntentClassification(
 
   // Find the highest scoring type
   let maxScore = 0;
-  let bestType: AssistantType = currentAssistantType || 'content_auditor';
+  let bestType: AssistantType = currentAssistantType || getDefaultAssistantType();
   
   Object.entries(scores).forEach(([type, score]) => {
     if (score > maxScore) {

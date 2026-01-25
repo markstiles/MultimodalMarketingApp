@@ -1,0 +1,42 @@
+add_component_on_page: Add component to a page
+add_language_to_page: Add a language to a page
+create_child_item: Create child item under parent
+create_component_datasource: Creaet component datasource
+create_content_item: Create content item
+create_page: Create a new page
+create_personalization_version: Create personalization version for a page
+delete_child_item: Delete child item
+delete_content: Delete content item
+get_all_languages: Get all available languages in the system
+get_all_pages_by_site: Get all pages by site
+get_allowed_components_by_placeholder: Get allowed components by placeholder
+get_asset_information: Get asset information by ID
+get_component: Get component details
+get_components_by_placeholder: Get placeholder components
+get_components_on_page: Get all components on a page
+get_content_item_by_id: Get content item by ID
+get_content_item_by_path: Get content item by path
+get_page: Get page details by ID and language
+get_page_html: Get page HTML content
+get_page_path_by_live_url: Get page path by live URL
+get_page_preview_url: Get the preview URL for a specific page
+get_page_screenshot: Get a screenshot of a page
+get_page_template_by_id: Get page template by id including available fields
+get_personalization_condition_template_by_id
+get_personalization_condition_templates
+get_personalization_versions_by_page
+get_site_id_from_item: Get site ID from item
+get_site_information: Get site information by site ID
+list_available_insertoptions
+list_components: List all components for a site
+list_sites: List all sites with name and target hostname
+move_component_within_placeholder
+remove_component_on_page: Remove component from page
+search_assets
+search_component_datasources
+search_site: Search site pages by title
+set_component_datasource
+update_asset: Update asset metadata and fields
+update_content: Update content item
+update_fields_on_content_item: Update fields on content item
+upload_asset: Upload new asset to media library

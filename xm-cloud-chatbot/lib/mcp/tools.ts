@@ -1,150 +1,6 @@
 // Hardcoded tool definitions for OpenAI function calling
 // Based on @markstiles/sitecore-search-mcp available tools
 
-export const SITECORE_SEARCH_TOOLS = [
-  {
-    type: 'function' as const,
-    function: {
-      name: 'sitecore_search_query',
-      description: 'Execute a basic search query in Sitecore Search. Use this to find content across the site.',
-      parameters: {
-        type: 'object',
-        properties: {
-          fields: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Array of field names to return in search results (default: ["name", "description"])',
-          },
-          domainId: {
-            type: 'string',
-            description: 'Sitecore domain ID',
-          },
-          rfkId: {
-            type: 'string',
-            description: 'RFK widget ID for the search',
-          },
-          keyphrase: {
-            type: 'string',
-            description: 'Search query text (optional)',
-          },
-          entity: {
-            type: 'string',
-            description: 'Entity type to search (e.g., content, product, page)',
-          },
-          page: {
-            type: 'number',
-            description: 'Page number for pagination (default: 1)',
-          },
-          limit: {
-            type: 'number',
-            description: 'Results per page (default: 24)',
-          },
-        },
-        required: ['fields', 'domainId', 'rfkId', 'entity'],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'sitecore_search_with_facets',
-      description: 'Execute a faceted search with filtering and sorting capabilities. Use this for advanced searches with filters.',
-      parameters: {
-        type: 'object',
-        properties: {
-          fields: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Array of field names to return in search results (default: ["name", "description"])',
-          },
-          domainId: {
-            type: 'string',
-            description: 'Sitecore domain ID',
-          },
-          rfkId: {
-            type: 'string',
-            description: 'RFK widget ID for the search',
-          },
-          keyphrase: {
-            type: 'string',
-            description: 'Search query text',
-          },
-          facets: {
-            type: 'array',
-            description: 'Array of facet configurations with filters',
-            items: {
-              type: 'object',
-              properties: {
-                name: {
-                  type: 'string',
-                  description: 'Facet field name',
-                },
-                type: {
-                  type: 'string',
-                  description: 'Facet type (value or range)',
-                },
-                values: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Filter values for this facet',
-                },
-              },
-            },
-          },
-          sort: {
-            type: 'object',
-            description: 'Sort criteria (e.g., {price: "asc"})',
-          },
-        },
-        required: ['fields', 'domainId', 'rfkId'],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'sitecore_ai_search',
-      description: 'Get AI-powered answers to questions or generate related questions about content.',
-      parameters: {
-        type: 'object',
-        properties: {
-          fields: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Array of field names to return in search results (default: ["name", "description"])',
-          },
-          domainId: {
-            type: 'string',
-            description: 'Sitecore domain ID',
-          },
-          rfkId: {
-            type: 'string',
-            description: 'RFK widget ID',
-          },
-          keyphrase: {
-            type: 'string',
-            description: 'Search query or question',
-          },
-          type: {
-            type: 'string',
-            enum: ['answer', 'question'],
-            description: 'Type of AI response: answer to query or related questions',
-          },
-          entity: {
-            type: 'string',
-            description: 'Entity type to search within',
-          },
-        },
-        required: ['fields', 'domainId', 'rfkId', 'keyphrase', 'type'],
-      },
-    },
-  },
-];
-
-export function getSitecoreSearchTools() {
-  return SITECORE_SEARCH_TOOLS;
-}
-
 // Image generation tool for OpenAI function calling
 export const IMAGE_GENERATION_TOOL = {
   type: 'function' as const,
@@ -215,6 +71,18 @@ export const CLIENT_CONTEXT_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'get_site_context',
+      description: 'Get the extended site context (from client.query("site.context")). This provides more details than pages.context.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'get_application_context',
       description: 'Get the current host application context (from client.query("application.context")).',
       parameters: {
@@ -250,6 +118,81 @@ export const CLIENT_CONTEXT_TOOLS = [
   },
 ];
 
+export const CLIENT_ACTION_TOOLS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'execute_client_mutation',
+      description: 'Execute a client-side mutation via the Marketplace SDK. Use this for actions not covered by specific tools.',
+      parameters: {
+        type: 'object',
+        properties: {
+          mutation: {
+            type: 'string',
+            description: 'The mutation key (e.g., "pages.reloadCanvas")',
+          },
+          payload: {
+            type: 'object',
+            description: 'The mutation payload/arguments',
+          },
+        },
+        required: ['mutation'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'reload_page_canvas',
+      description: 'Reload the page canvas in the editor. Use this when you have modified content and want the user to see the changes immediately.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'navigate_to_page',
+      description: 'Navigate the user to a different page. CRITICAL: You MUST verify the valid Sitecore Item ID of the destination page using search or list_pages tools BEFORE calling this. Do not guess IDs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          itemId: {
+            type: 'string',
+            description: 'The valid Sitecore Item ID (GUID) of the page to navigate to.',
+          },
+        },
+        required: ['itemId'],
+      },
+    },
+  },
+];
+
+export const LIST_PAGES_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'list_pages',
+    description: 'List all pages in the current site. Returns a list of page names, IDs, and paths. Use this to find the ID of a page when the user asks to navigate to it by name.',
+    parameters: {
+      type: 'object',
+      properties: {
+        siteId: {
+          type: 'string',
+          description: 'The ID of the site to list pages for. If omitted, uses the current site context.',
+        },
+        language: {
+          type: 'string',
+          description: 'The language to list pages for (e.g., "en"). Defaults to current context language.',
+        },
+      },
+      required: [],
+    },
+  },
+};
+
 export function getAllTools() {
-  return [...SITECORE_SEARCH_TOOLS, IMAGE_GENERATION_TOOL, ASSET_URL_TOOL, ...CLIENT_CONTEXT_TOOLS];
+  return [IMAGE_GENERATION_TOOL, ASSET_URL_TOOL, LIST_PAGES_TOOL, ...CLIENT_ACTION_TOOLS];
 }

@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { prisma } from '@/lib/db';
-import { getMCPClient } from '@/lib/mcp/search-client';
 import { getMarketerMCPClient, checkMarketerMCPAuth, MarketerMCPTool } from '@/lib/mcp/marketer-client';
-import { getAllTools } from '@/lib/mcp/tools';
-import { getAssistantConfig } from '@/lib/prompts';
+import { getAllTools, CLIENT_CONTEXT_TOOLS, CLIENT_ACTION_TOOLS, IMAGE_GENERATION_TOOL, ASSET_URL_TOOL } from '@/lib/mcp/tools';
+import { getAssistantConfig, ContextValues } from '@/lib/prompts';
 import { classifyIntent } from '@/lib/utils/classify-intent';
 import { generateConversationTitle } from '@/lib/utils/generate-title';
 import { AssistantType } from '@/lib/types/assistant';
-import { hasAgentApiCredentialsConfigured, uploadAssetViaAgentApi, updateAssetViaAgentApi } from '@/lib/sitecore/agent-api';
+import { 
+  hasAgentApiCredentialsConfigured, 
+  uploadAssetViaAgentApi, 
+  updateAssetViaAgentApi,
+  getAllPagesForSite,
+  getClientCredentialsJwt
+} from '@/lib/sitecore/agent-api';
 import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/utils/db-errors';
 import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
 import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
@@ -16,6 +21,15 @@ import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+const CHAT_API_DEBUG = process.env.CHAT_API_DEBUG
+  ? process.env.CHAT_API_DEBUG === 'true' || process.env.CHAT_API_DEBUG === '1'
+  : process.env.NODE_ENV === 'development';
+const debugLog = (...args: unknown[]) => {
+  if (CHAT_API_DEBUG) {
+    console.log(...args);
+  }
+};
 
 const MAX_INLINE_IMAGE_BYTES = 2_000_000; // keep well under typical model limits (base64 expands ~33%)
 
@@ -86,10 +100,11 @@ export async function POST(req: NextRequest) {
       applicationId,
       applicationContext,
       pagesContext,
+      siteContext,
       hostUser,
     } = body;
 
-    console.log('[Chat API] Auth Check Params:', { 
+    debugLog('[Chat API] Auth Check Params:', { 
       userId, 
       applicationId, 
       hasAgentId: Boolean(process.env.SITECORE_AGENT_API_CLIENT_ID),
@@ -116,14 +131,7 @@ export async function POST(req: NextRequest) {
       );
     }
     if (authStatus.requiresAuth) {
-      return NextResponse.json(
-        {
-          error: 'Authentication required',
-          requiresAuth: true,
-          authUrl: `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent('/editor-panel')}`,
-        },
-        { status: 401 }
-      );
+      debugLog('[Chat API] Marketer MCP auth required; continuing without Marketer MCP tools.');
     }
 
     // Get or create conversation
@@ -133,14 +141,14 @@ export async function POST(req: NextRequest) {
           include: { messages: { orderBy: { timestamp: 'asc' } } },
         })
       : null;
-    console.log('Conversation fetched:', conversation?.id || 'new conversation');
+    debugLog('Conversation fetched:', conversation?.id || 'new conversation');
 
     // Get conversation history
     const conversationHistory = conversation?.messages.map((m: { role: string; content: string }) => ({
       role: m.role,
       content: m.content,
     })) || [];
-    console.log('Conversation history length:', conversationHistory.length);
+    debugLog('Conversation history length:', conversationHistory.length);
 
     // Classify intent (initial or reclassification)
     const intentResult = await classifyIntent(
@@ -148,7 +156,7 @@ export async function POST(req: NextRequest) {
       conversationHistory.length > 0 ? conversationHistory : undefined,
       conversation?.assistantType as AssistantType | undefined
     );
-    console.log('Intent classification result:', intentResult);
+    debugLog('Intent classification result:', intentResult);
 
     // Create new conversation if needed
     if (!conversation) {
@@ -157,31 +165,57 @@ export async function POST(req: NextRequest) {
           userId,
           siteId,
           assistantType: intentResult.assistantType,
-          metadata: { currentPageId },
+          metadata: { 
+            currentPageId,
+            applicationId,
+            environmentHost: process.env.ENVIRONMENT_HOST,
+            applicationContext,
+            pagesContext,
+            siteContext,
+            hostUser,
+          },
         },
         include: { messages: true },
       });
-    } else if (intentResult.shouldSwitch) {
-      // Update conversation assistant type if switching
+    } else {
+      // Always update conversation context/metadata so we have the latest page/app info
+      const currentMeta = (conversation.metadata as Record<string, any>) || {};
+      const newMeta = {
+        ...currentMeta,
+        currentPageId: currentPageId || currentMeta.currentPageId,
+        applicationId: applicationId || currentMeta.applicationId,
+        environmentHost: process.env.ENVIRONMENT_HOST || currentMeta.environmentHost,
+        applicationContext: applicationContext || currentMeta.applicationContext,
+        pagesContext: pagesContext || currentMeta.pagesContext,
+        siteContext: siteContext || currentMeta.siteContext,
+        hostUser: hostUser || currentMeta.hostUser,
+      };
+
       conversation = await prisma.conversation.update({
         where: { id: conversation.id },
-        data: { assistantType: intentResult.assistantType },
+        data: { 
+          assistantType: intentResult.shouldSwitch ? intentResult.assistantType : undefined,
+          siteId: siteId, // Ensure siteId is current
+          metadata: newMeta,
+        },
         include: { messages: { orderBy: { timestamp: 'asc' } } },
       });
 
-      // Track assistant switch in analytics
-      await prisma.analytics.create({
-        data: {
-          conversationId: conversation.id,
-          eventType: 'assistant_switch',
-          eventData: {
-            from: conversation.assistantType,
-            to: intentResult.assistantType,
-            confidence: intentResult.confidence,
-            reasoning: intentResult.reasoning,
+      if (intentResult.shouldSwitch) {
+        // Track assistant switch in analytics
+        await prisma.analytics.create({
+          data: {
+            conversationId: conversation.id,
+            eventType: 'assistant_switch',
+            eventData: {
+              from: conversation.assistantType,
+              to: intentResult.assistantType,
+              confidence: intentResult.confidence,
+              reasoning: intentResult.reasoning,
+            },
           },
-        },
-      });
+        });
+      }
     }
 
     // Save user message
@@ -195,8 +229,24 @@ export async function POST(req: NextRequest) {
     });
 
     // Get assistant configuration
+    const pagesContextInfo = pagesContext || (conversation.metadata as any)?.pagesContext;
+    const siteName = pagesContextInfo?.siteInfo?.name;
+    const currentPageName =
+      pagesContextInfo?.pageInfo?.displayName || pagesContextInfo?.pageInfo?.name;
+    const currentPagePath = pagesContextInfo?.pageInfo?.path;
+
     const assistantConfig = getAssistantConfig(
-      conversation.assistantType as AssistantType
+      conversation.assistantType as AssistantType,
+      {
+        currentPageId,
+        currentPageName,
+        currentPagePath,
+        siteId,
+        siteName,
+        userId,
+        applicationId,
+        environmentHost: process.env.ENVIRONMENT_HOST
+      }
     );
 
     // Prepare messages for OpenAI
@@ -228,7 +278,7 @@ export async function POST(req: NextRequest) {
     // We'll attach the image inside the stream (and emit status updates) just before the OpenAI call.
     const userContent: string = selectedAssetText ? `${message}\n\n${selectedAssetText}` : message;
 
-    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    let messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
         role: 'system',
         content: assistantConfig.systemPrompt,
@@ -257,15 +307,25 @@ export async function POST(req: NextRequest) {
     let marketerMCPClient: Awaited<ReturnType<typeof getMarketerMCPClient>> | undefined;
     try {
       tools = getAllTools();
-      console.log('Search tools loaded:', tools?.length || 0, 'tools');
       
+      debugLog('Total tools loaded (Local):', tools?.length || 0);
+
       // Initialize marketer-mcp client
       try {
-        marketerMCPClient = await getMarketerMCPClient(userId, applicationId);
-        const marketerTools = marketerMCPClient.getAvailableTools();
-        console.log('Marketer-MCP tools loaded:', marketerTools.length, 'tools');
+        const authCheck = await checkMarketerMCPAuth(userId, applicationId);
+        if (!authCheck.authenticated && authCheck.requiresAuth) {
+          debugLog('[Marketer MCP] Skipping connect: user not authenticated in Marketplace app.');
+          marketerMCPClient = undefined;
+        } else {
+          marketerMCPClient = await getMarketerMCPClient(userId, applicationId);
+        }
 
-        if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
+        const marketerTools = marketerMCPClient ? marketerMCPClient.getAvailableTools() : [];
+        if (marketerMCPClient) {
+          debugLog('Marketer-MCP tools loaded:', marketerTools.length, 'tools');
+        }
+
+        if (marketerMCPClient && (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1')) {
           try {
             const interesting = new Set([
               'update_content',
@@ -287,9 +347,9 @@ export async function POST(req: NextRequest) {
                   properties: props,
                 };
               });
-            console.log('[Marketer MCP] Tool schema summary:', JSON.stringify(schemaSummary, null, 2));
+            debugLog('[Marketer MCP] Tool schema summary:', JSON.stringify(schemaSummary, null, 2));
           } catch {
-            console.log('[Marketer MCP] Tool schema summary: [unavailable]');
+            debugLog('[Marketer MCP] Tool schema summary: [unavailable]');
           }
         }
         
@@ -305,6 +365,21 @@ export async function POST(req: NextRequest) {
             },
           }));
           tools = [...(tools || []), ...formattedMarketerTools] as any;
+
+          // Append Marketer Tools description to the System Prompt
+          const marketerToolsDescription = `
+    ## Sitecore Marketer MCP Tools
+    IMPORTANT: Use these tools for all AUTHORING and EDITING tasks.
+
+    ${marketerTools.map((t, index) => `
+    ${index + 1}. ${t.name} - ${t.description}
+      - Parameters: ${Object.keys(t.inputSchema.properties || {}).join(', ') || 'None'}
+    `).join('')}
+          `;
+
+          if (messages[0].role === 'system') {
+             messages[0].content += `\n\n${marketerToolsDescription}`;
+          }
         }
       } catch (error) {
         console.warn('Marketer-MCP not available, continuing without it:', error);
@@ -323,9 +398,6 @@ export async function POST(req: NextRequest) {
           const TOOL_STATUS_LABELS: Record<string, string> = {
             generate_image: 'Generating an image... ',
             generate_asset_url: 'Generating an asset URL...',
-            sitecore_search_query: 'Searching content...',
-            sitecore_search_with_facets: 'Running faceted search...',
-            sitecore_ai_search: 'Running AI search...',
             sitecore_get_recommendations: 'Fetching recommendations...',
             sitecore_create_document: 'Creating document...',
             sitecore_update_document: 'Updating document...',
@@ -372,7 +444,16 @@ export async function POST(req: NextRequest) {
           };
 
           const emit = (payload: Record<string, unknown>) => {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+            } catch (err: any) {
+              // Ignore errors if the stream is already closed (e.g. client navigated away)
+              if (err.code === 'ERR_INVALID_STATE' || err.message?.includes('closed')) {
+                // debugLog('Stream closed by client during emit.');
+                return;
+              }
+              console.error('Error emitting to stream:', err);
+            }
           };
 
           const looksLikeActionPromise = (text: string): boolean => {
@@ -530,55 +611,8 @@ export async function POST(req: NextRequest) {
                 const defaultDomainId = process.env.SITECORE_DOMAIN_ID || '34706982';
                 const defaultRfkId = process.env.SITECORE_RFK_ID || 'rfkid_7';
 
-                // Ensure required fields and defaults for Sitecore search tools
-                if (
-                  accumulated.name === 'sitecore_search_query' ||
-                  accumulated.name === 'sitecore_search_with_facets' ||
-                  accumulated.name === 'sitecore_ai_search'
-                ) {
-                  if (!args.fields) {
-                    args.fields = ['name', 'description'];
-                  }
-                  if (!args.domainId) {
-                    args.domainId = defaultDomainId;
-                  }
-                  if (!args.rfkId) {
-                    args.rfkId = defaultRfkId;
-                  }
-                  if (!args.entity || args.entity === 'page') {
-                    args.entity = 'content';
-                  }
-                  if (!args.page) {
-                    args.page = 1;
-                  }
-                  if (!args.limit) {
-                    args.limit = 10;
-                  }
-                  if (!args.keyphrase) {
-                    args.keyphrase = '*';
-                  }
-
-                  // Apply site filter if siteId is available
-                  if (siteId) {
-                    const siteFilter = {
-                      type: 'eq',
-                      name: 'site',
-                      values: [String(siteId)],
-                    };
-
-                    if (Array.isArray(args.filter)) {
-                      args.filter = [...args.filter, siteFilter];
-                    } else if (Array.isArray(args.filters)) {
-                      args.filters = [...args.filters, siteFilter];
-                    } else {
-                      // Prefer 'filters' key if absent
-                      args.filters = [siteFilter];
-                    }
-                  }
-                }
-
                 const debugArgs = JSON.stringify(args, null, 2);
-                console.log(`Executing ${accumulated.name} with args: ${debugArgs}`);
+                debugLog(`Executing ${accumulated.name} with args: ${debugArgs}`);
 
                 // Marketer MCP: distinguish between updating an item record/version vs updating field values.
                 // If the model tried to update field values via update_content, reroute to update_fields_on_content_item
@@ -593,12 +627,12 @@ export async function POST(req: NextRequest) {
                       '[Marketer MCP] update_content called without updatedFields; this will not change any field values. Use update_fields_on_content_item for field updates.'
                     );
                   } else {
-                    console.log('[Marketer MCP] update_content provided updatedFields keys:', keys);
+                    debugLog('[Marketer MCP] update_content provided updatedFields keys:', keys);
                     const fieldUpdateTool = getMarketerToolByName('update_fields_on_content_item');
                     if (fieldUpdateTool) {
                       effectiveToolName = 'update_fields_on_content_item';
                       effectiveArgs = buildFieldUpdateArgs(args, fieldUpdateTool);
-                      console.log(
+                      debugLog(
                         '[Marketer MCP] Rerouting update_content(updatedFields) -> update_fields_on_content_item to actually update field values.'
                       );
                     } else {
@@ -680,7 +714,7 @@ export async function POST(req: NextRequest) {
                   });
 
                   mcpCalls.push({ tool: accumulated.name, args, result: formattedResult });
-                  console.log(`Tool ${accumulated.name} executed successfully`);
+                  debugLog(`Tool ${accumulated.name} executed successfully`);
                   continue;
                 }
 
@@ -721,13 +755,14 @@ export async function POST(req: NextRequest) {
                   });
 
                   mcpCalls.push({ tool: accumulated.name, args, result: formattedResult });
-                  console.log(`Tool ${accumulated.name} executed successfully`);
+                  debugLog(`Tool ${accumulated.name} executed successfully`);
                   continue;
                 }
 
                 // Client Context Tools
                 if (accumulated.name === 'get_application_context') {
-                  const result = applicationContext || { error: 'Application context not available' };
+                  const meta = conversation.metadata as any;
+                  const result = applicationContext || meta?.applicationContext || { error: 'Application context not available' };
                   toolResults.push({
                     role: 'tool',
                     tool_call_id: accumulated.id,
@@ -738,7 +773,8 @@ export async function POST(req: NextRequest) {
                 }
 
                 if (accumulated.name === 'get_pages_context') {
-                  const result = pagesContext || { error: 'Pages context not available' };
+                  const meta = conversation.metadata as any;
+                  const result = pagesContext || meta?.pagesContext || { error: 'Pages context not available' };
                   toolResults.push({
                     role: 'tool',
                     tool_call_id: accumulated.id,
@@ -749,13 +785,175 @@ export async function POST(req: NextRequest) {
                 }
 
                 if (accumulated.name === 'get_host_user') {
-                  const result = hostUser || { error: 'Host user information not available' };
+                  // Fallback to metadata if direct context is missing
+                  const meta = conversation.metadata as any;
+                  const result = hostUser || meta?.hostUser || { error: 'Host user information not available' };
                   toolResults.push({
                     role: 'tool',
                     tool_call_id: accumulated.id,
                     content: JSON.stringify(result),
                   });
                   mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'get_site_context') {
+                  const meta = conversation.metadata as any;
+                  const result = siteContext || meta?.siteContext || { error: 'Site context not available' };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'reload_page_canvas') {
+                  emit({ type: 'client_action', action: 'reload_page_canvas' });
+                  const result = { success: true, message: 'Reloading page canvas...' };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'navigate_to_page') {
+                  emit({ type: 'client_action', action: 'navigate_to_page', data: args });
+                  const result = { success: true, message: `Navigating to page ${args.itemId}...` };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'execute_client_mutation') {
+                  emit({ 
+                    type: 'client_action', 
+                    action: 'execute_mutation', 
+                    data: { mutation: args.mutation, payload: args.payload } 
+                  });
+                  const result = { success: true, message: `Executing mutation ${args.mutation}...` };
+                  toolResults.push({
+                    role: 'tool',
+                    tool_call_id: accumulated.id,
+                    content: JSON.stringify(result),
+                  });
+                  mcpCalls.push({ tool: accumulated.name, args, result });
+                  continue;
+                }
+
+                if (accumulated.name === 'list_pages') {
+                  emit({ type: 'status', message: 'Listing pages using XMC SDK...' });
+                  try {
+                    const reqSiteId = (args as any).siteId || siteId || '';
+                    const language = (args as any).language || 'en';
+                    
+                    debugLog(`[list_pages] Requesting: siteId=${reqSiteId}, language=${language}`);
+
+                    if (!reqSiteId) {
+                         throw new Error('No site ID provided or found in context.');
+                    }
+
+                    let pagesResult = null;
+                    let serviceAuthFailed = false;
+
+                    // 1. Try Service Credentials (API Client) first - "Built-in" auth
+                    // NOTE: This often fails for 'experimental_XMC' SDK calls if the Audience or Scopes 
+                    // of the M2M token don't match exactly what the Edge Platform proxy expects.
+                    // We try it, but verify success.
+                    if (hasAgentApiCredentialsConfigured()) {
+                         debugLog('[list_pages] Attempting to use configured Service Credentials...');
+                         try {
+                            const svcToken = await getClientCredentialsJwt();
+                            if (svcToken) {
+                                // Optimistically try the API. If it throws (e.g. 401), we catch and proceed to User Auth.
+                                pagesResult = await getAllPagesForSite(reqSiteId, language, svcToken, process.env.ENVIRONMENT_HOST || '');
+                                debugLog('[list_pages] Service Credentials success.');
+                            }
+                         } catch (err: any) {
+                             console.warn('[list_pages] Service Credential Token failed (falling back to user auth):', err.message);
+                             serviceAuthFailed = true;
+                         }
+                    }
+
+                    // 2. Fallback to User Context (Application Context or DB)
+                    if (!pagesResult) {
+                        let userToken: string | null = null;
+                        
+                        // Check Application Context (passed from Frontend)
+                        const contextToken = (applicationContext as any)?.auth?.accessToken;
+                        if (contextToken) {
+                             debugLog('[list_pages] Found access token in Application Context.');
+                             userToken = contextToken;
+                        } 
+                        
+                        // Check Database (User OAuth)
+                        if (!userToken) {
+                            debugLog('[list_pages] Checking User OAuth token in DB...');
+                            const tokenEntry = await prisma.oAuthToken.findUnique({
+                                where: { userId }
+                            });
+                            
+                            if (tokenEntry && tokenEntry.accessToken && tokenEntry.expiresAt >= new Date()) {
+                                userToken = tokenEntry.accessToken;
+                            }
+                        }
+
+                        if (!userToken) {
+                            debugLog(`[list_pages] User Auth required. Service Auth Failed: ${serviceAuthFailed}`);
+                            
+                            const referer = req.headers.get('referer') || '';
+                            const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
+                            
+                            emit({ 
+                                type: 'client_action', 
+                                action: 'auth_required',
+                                data: { url: authUrl }
+                            });
+                            
+                            await new Promise(r => setTimeout(r, 100));
+                            throw new Error(`Authentication required. Please log in to access site pages.`);
+                        }
+
+                        // Try with User Token
+                        debugLog('[list_pages] Calling getAllPagesForSite with User Token...');
+                        pagesResult = await getAllPagesForSite(reqSiteId, language, userToken, process.env.ENVIRONMENT_HOST || '');
+                    }
+                    
+                    debugLog(`[list_pages] Success. Found ${Array.isArray(pagesResult) ? pagesResult.length : 0} pages.`);
+                    
+                    const result = { 
+                        pages: Array.isArray(pagesResult) ? pagesResult.map((p: any) => ({
+                            id: p.id,
+                            name: p.name,
+                            displayName: p.displayName,
+                            path: p.path
+                        })) : []
+                    };
+                    
+                    toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify(result),
+                    });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                    
+                  } catch (err: any) {
+                    const result = { error: err.message || String(err) };
+                     toolResults.push({
+                      role: 'tool',
+                      tool_call_id: accumulated.id,
+                      content: JSON.stringify(result),
+                    });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
                   continue;
                 }
 
@@ -770,7 +968,7 @@ export async function POST(req: NextRequest) {
                   const signature = `${effectiveToolName}:${stableStringify(effectiveArgs)}`;
                   if (toolCallResultCache.has(signature)) {
                     result = toolCallResultCache.get(signature);
-                    console.log(`[Marketer MCP] Deduped repeated tool call: ${effectiveToolName}`);
+                    debugLog(`[Marketer MCP] Deduped repeated tool call: ${effectiveToolName}`);
 
                     toolResults.push({
                       role: 'tool',
@@ -796,7 +994,7 @@ export async function POST(req: NextRequest) {
                         // ignore cache failures
                       }
                     } else {
-                      console.log('Routing upload_asset to Sitecore Agent API (raw multipart)');
+                      debugLog('Routing upload_asset to Sitecore Agent API (raw multipart)');
                     if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
                       try {
                         const fp = (effectiveArgs as any)?.filePath;
@@ -804,8 +1002,8 @@ export async function POST(req: NextRequest) {
                         const isData = typeof fp === 'string' && /^data:/i.test(fp);
                         const hasB64 = typeof (effectiveArgs as any)?.fileContentBase64 === 'string';
                         const headerKeys = Object.keys(((effectiveArgs as any)?.downloadHeaders ?? {}) as any);
-                        console.log('[upload_asset] filePath:', fp);
-                        console.log('[upload_asset] pathKind:', { isUrl, isData, hasB64, downloadHeaderKeys: headerKeys });
+                        debugLog('[upload_asset] filePath:', fp);
+                        debugLog('[upload_asset] pathKind:', { isUrl, isData, hasB64, downloadHeaderKeys: headerKeys });
                       } catch {
                         // ignore debug logging failures
                       }
@@ -830,7 +1028,7 @@ export async function POST(req: NextRequest) {
                         // ignore cache failures
                       }
                     } else {
-                      console.log('Routing update_asset to Sitecore Agent API (raw REST)');
+                      debugLog('Routing update_asset to Sitecore Agent API (raw REST)');
                       const assetId =
                         (effectiveArgs as any)?.assetId ||
                         (effectiveArgs as any)?.asset_id ||
@@ -850,13 +1048,13 @@ export async function POST(req: NextRequest) {
                     }
                   } else {
 
-                  console.log(`Routing ${effectiveToolName} to marketer-mcp`);
+                  debugLog(`Routing ${effectiveToolName} to marketer-mcp`);
                   if (process.env.MARKETER_MCP_DEBUG === 'true' || process.env.MARKETER_MCP_DEBUG === '1') {
                     try {
                       const json = JSON.stringify(effectiveArgs, null, 2);
-                      console.log('[Marketer MCP] Tool args JSON:', json.length > 12000 ? `${json.slice(0, 12000)}…[truncated ${json.length}]` : json);
+                      debugLog('[Marketer MCP] Tool args JSON:', json.length > 12000 ? `${json.slice(0, 12000)}…[truncated ${json.length}]` : json);
                     } catch {
-                      console.log('[Marketer MCP] Tool args JSON: [unserializable]');
+                      debugLog('[Marketer MCP] Tool args JSON: [unserializable]');
                     }
                   }
                     result = await marketerMCPClient!.callTool(effectiveToolName, effectiveArgs);
@@ -868,32 +1066,11 @@ export async function POST(req: NextRequest) {
                     }
                   }
                 } else {
-                  console.log(`Routing ${accumulated.name} to search-mcp`);
-                  const mcpClient = await getMCPClient();
-                  result = await mcpClient.callTool(accumulated.name, args);
+                  debugLog(`Tool ${accumulated.name} is not recognized as a Marketer MCP tool or local tool.`);
                 }
 
-                console.log(`Result from ${accumulated.name}:`, result);
+                debugLog(`Result from ${accumulated.name}:`, result);
                 mcpCalls.push({ tool: effectiveToolName, args: effectiveArgs, result });
-
-                // If this was a search call that looks like it returned assets, emit structured assets
-                // so the client can render thumbnails/links.
-                try {
-                  const isSearchTool =
-                    effectiveToolName === 'sitecore_search_query' ||
-                    effectiveToolName === 'sitecore_search_with_facets';
-                  if (isSearchTool) {
-                    const assets = extractChatAssetsFromToolResult({
-                      result,
-                      thumbnailWidth: 100,
-                    });
-                    if (assets.length > 0) {
-                      emit({ type: 'assets', assets });
-                    }
-                  }
-                } catch (err) {
-                  console.warn('Failed to extract assets from tool result:', err);
-                }
 
                 await prisma.analytics.create({
                   data: {
@@ -913,7 +1090,7 @@ export async function POST(req: NextRequest) {
                   content: JSON.stringify(result),
                 });
 
-                console.log(`Tool ${accumulated.name} executed successfully`);
+                debugLog(`Tool ${accumulated.name} executed successfully`);
               } catch (error) {
                 console.error('MCP tool call error:', error);
                 if (accumulated.id) {
@@ -1004,7 +1181,7 @@ export async function POST(req: NextRequest) {
               Array.isArray(tools) &&
               tools.length > 0 &&
               (requireToolsThisRound ||
-                (intentResult?.assistantType === 'component_populator' &&
+                (intentResult?.assistantType === 'content_authoring' &&
                   looksLikeXmCloudMutationRequest(message) &&
                   mcpCalls.length === 0));
 
@@ -1042,7 +1219,7 @@ export async function POST(req: NextRequest) {
                     // The user asked for logging when intent isn't empty.
                     if (intentResult?.assistantType && !requestedToolNames.has(toolCall.function.name)) {
                       requestedToolNames.add(toolCall.function.name);
-                      console.log('[Tool request]', {
+                      debugLog('[Tool request]', {
                         intent: intentResult.assistantType,
                         tool: toolCall.function.name,
                         toolCallId: toolCall.id,
@@ -1070,7 +1247,7 @@ export async function POST(req: NextRequest) {
             }
 
             if (finishReason === 'tool_calls') {
-              console.log('Tool calls complete, executing...');
+              debugLog('Tool calls complete, executing...');
 
               const assistantMessage: OpenAI.Chat.ChatCompletionAssistantMessageParam = {
                 role: 'assistant',
@@ -1109,7 +1286,7 @@ export async function POST(req: NextRequest) {
                 !forcedToolRetryUsed &&
                 Array.isArray(tools) &&
                 tools.length > 0 &&
-                (intentResult?.assistantType === 'component_populator' || intentResult?.assistantType === 'asset_manager') &&
+                (intentResult?.assistantType === 'content_authoring' || intentResult?.assistantType === 'asset_manager') &&
                 looksLikeToolRequiredAction(interimClean) &&
                 mcpCalls.length === 0;
 
@@ -1141,23 +1318,6 @@ export async function POST(req: NextRequest) {
 
           // Persist + finalize stream
           const latency = Date.now() - startTime;
-
-          // If the model didn't emit any assistant content but tools ran,
-          // stream a basic summary so the UI still shows an answer.
-          if (!fullResponse.trim() && mcpCalls.length > 0) {
-            const fallback =
-              'Here are the tool results:\n\n' +
-              mcpCalls
-                .map((c) => {
-                  const args = JSON.stringify(c.args ?? {}, null, 2);
-                  const result = JSON.stringify(c.result ?? {}, null, 2);
-                  return `### ${c.tool}\n\n**Args**\n\n\`\`\`json\n${args}\n\`\`\`\n\n**Result**\n\n\`\`\`json\n${result}\n\`\`\``;
-                })
-                .join('\n\n');
-
-            fullResponse = fallback;
-            emit({ type: 'content', content: fallback });
-          }
 
           const cleanedResponse = cleanIncompleteMarkdown(fullResponse);
 
@@ -1227,8 +1387,13 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          emit({ type: 'done', conversationId: conversation.id });
-          controller.close();
+          // emit({ type: 'done', conversationId: conversation.id });
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done', conversationId: conversation.id })}\n\n`));
+            controller.close();
+          } catch (err: any) {
+             // Ignore "Controller is already closed" errors which happen if client disconnects early
+          }
         } catch (error) {
           console.error('Streaming error:', error);
           try {
@@ -1245,7 +1410,14 @@ export async function POST(req: NextRequest) {
           } catch {
             // ignore
           }
-          controller.close();
+           try {
+            controller.close();
+          } catch (err: any) {
+             // Ignore "Controller is already closed" errors
+             if (err.code !== 'ERR_INVALID_STATE') {
+                 // ignore
+             }
+          }
         }
       },
     });

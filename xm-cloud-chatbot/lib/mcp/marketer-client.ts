@@ -4,7 +4,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { prisma } from '@/lib/db';
 import { isDatabaseUnavailableError } from '@/lib/utils/db-errors';
-import { getClientCredentialsJwt } from '@/lib/sitecore/agent-api';
 
 export interface MarketerMCPTool {
   name: string;
@@ -155,77 +154,66 @@ export class MarketerMCPClient {
   }
 
   private async getAccessToken(): Promise<string> {
-    // 1. Prefer Service Account (Agent API) token if App Context ID is present
-    if (this.applicationId) {
-      const agentToken = await getClientCredentialsJwt();
-      if (agentToken) {
-        console.log('[Marketer MCP] Using Client Credentials (Agent API) token via Application Context bypass.');
-        return agentToken;
-      }
-      console.warn('[Marketer MCP] Application ID present but could not fetch Agent API token. Falling back to User OAuth.');
-    }
-
-    // 2. Fallback to User OAuth Token from Database
+    // 1. Fallback to User OAuth Token from Database
     const tokenRecord = await prisma.oAuthToken.findUnique({
       where: { userId: this.userId },
     });
 
+    if (tokenRecord) {
+      // Validate token issuer/audience for Marketer MCP (JWTs only)
+      try {
+        if (this.isJwt(tokenRecord.accessToken)) {
+          const payload = this.decodeJwt(tokenRecord.accessToken);
+
+          if (!this.tokenMatchesMcp(tokenRecord.accessToken)) {
+            console.warn('[Marketer MCP] Stored token does not match expected issuer/resource. Re-auth required.', {
+              expectedIssuer: this.getExpectedIssuer(),
+              expectedResource: this.getExpectedResource(),
+              tokenIssuer: payload?.iss,
+              tokenAud: payload?.aud,
+              tokenResource: payload?.resource,
+            });
+            await prisma.oAuthToken.delete({ where: { userId: this.userId } }).catch(() => undefined);
+            // Don't throw immediately, see if Client Credentials works below
+          } else {
+             // Check if token is expired (with 5-minute buffer)
+             const isExpired = tokenRecord.expiresAt.getTime() - Date.now() < 5 * 60 * 1000;
+
+              if (isExpired) {
+                // Try to refresh the token
+                if (tokenRecord.refreshToken) {
+                  try {
+                    await this.refreshAccessToken();
+                    // Fetch the updated token
+                    const updatedToken = await prisma.oAuthToken.findUnique({
+                      where: { userId: this.userId },
+                    });
+                    if (updatedToken) {
+                      return updatedToken.accessToken;
+                    }
+                  } catch (e) {
+                     console.warn('Token Refresh Failed:', e);
+                  }
+                }
+                // Don't throw yet, try fallback
+              } else {
+                 return tokenRecord.accessToken;
+              }
+          }
+        } else {
+          console.log('[Marketer MCP] Stored access_token is opaque (not a JWT); skipping local claim validation.');
+          return tokenRecord.accessToken; // Opaque tokens returned as-is
+        }
+      } catch (err) {
+        console.warn('[Marketer MCP] Could not decode/validate token:', err);
+      }
+    }
+
     if (!tokenRecord) {
-      throw new Error('No OAuth token found. User needs to authenticate.');
+       throw new Error('No OAuth token found. User must authenticate in the Marketplace app.');
     }
-
-    // Validate token issuer/audience for Marketer MCP (JWTs only)
-    try {
-      if (this.isJwt(tokenRecord.accessToken)) {
-        const payload = this.decodeJwt(tokenRecord.accessToken);
-        console.log('[Marketer MCP] Token scope:', payload.scope);
-        console.log('[Marketer MCP] Token issuer:', payload.iss);
-        console.log('[Marketer MCP] Token audience:', payload.aud);
-        if (payload.resource) {
-          console.log('[Marketer MCP] Token resource:', payload.resource);
-        }
-        console.log('[Marketer MCP] Token issued at:', new Date(payload.iat * 1000).toISOString());
-
-        if (!this.tokenMatchesMcp(tokenRecord.accessToken)) {
-          console.warn('[Marketer MCP] Stored token does not match expected issuer/resource. Forcing re-auth.', {
-            expectedIssuer: this.getExpectedIssuer(),
-            expectedResource: this.getExpectedResource(),
-            tokenIssuer: payload?.iss,
-            tokenAud: payload?.aud,
-            tokenResource: payload?.resource,
-          });
-          await prisma.oAuthToken.delete({ where: { userId: this.userId } }).catch(() => undefined);
-          throw new Error('Stored OAuth token is not valid for Marketer MCP. User needs to re-authenticate.');
-        }
-      } else {
-        console.log('[Marketer MCP] Stored access_token is opaque (not a JWT); skipping local claim validation.');
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('User needs to re-authenticate')) {
-        throw err;
-      }
-      console.warn('[Marketer MCP] Could not decode/validate token:', err);
-    }
-
-    // Check if token is expired (with 5-minute buffer)
-    const isExpired = tokenRecord.expiresAt.getTime() - Date.now() < 5 * 60 * 1000;
-
-    if (isExpired) {
-      // Try to refresh the token
-      if (tokenRecord.refreshToken) {
-        await this.refreshAccessToken();
-        // Fetch the updated token
-        const updatedToken = await prisma.oAuthToken.findUnique({
-          where: { userId: this.userId },
-        });
-        if (updatedToken) {
-          return updatedToken.accessToken;
-        }
-      }
-      throw new Error('OAuth token expired and refresh failed. User needs to re-authenticate.');
-    }
-
-    return tokenRecord.accessToken;
+    
+     throw new Error('OAuth token expired and refresh failed. User must re-authenticate in the Marketplace app.');
   }
 
   private async refreshAccessToken(): Promise<void> {
@@ -511,14 +499,7 @@ export async function checkMarketerMCPAuth(
   dbUnavailable?: boolean;
 }> {
   try {
-    // 1. If we have a valid Application ID (proving we are embedded in XM Cloud)
-    //    AND we have configured agent credentials, assume we can use the Service Account.
-    if (applicationId && Boolean(process.env.SITECORE_AGENT_API_CLIENT_ID)) {
-      console.log(`[Auth Check] Application Context ID "${applicationId}" provided. Assuming Agent API credentials flow.`);
-      return { authenticated: true, requiresAuth: false };
-    }
-
-    // 2. Fallback to standard User OAuth flow
+    // Use standard User OAuth flow (Marketplace built-in auth stores a user token)
     const tokenRecord = await prisma.oAuthToken.findUnique({
       where: { userId },
     });

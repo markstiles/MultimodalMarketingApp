@@ -14,12 +14,10 @@ The chatbot application allows users to assume one of several roles by specializ
 ### Capabilities
 The application has a variety of capabilities to assist users in their tasks:
 - **Sitecore XM Cloud Integration** - Seamless integration with Sitecore XM Cloud Pages Editor
-  - Uses Sitecore Search MCP for searching content to gather refernence information about the site
-  - Leverages Sitecore's Marketer MCP to build and edit pages with components and edit field content and media assets
-  - Logins using Sitecore's OAuth system of authentication
+  - Uses Sitecore client and xmc npm package library to build and edit pages with components and edit field content and media assets
 - **Conversational Interface** - Natural language interaction with streaming responses
 - **Context Awareness** - Maintains conversation context across pages
-- **Analytics Tracking** - Tracks token usage, MCP calls, and user actions
+- **Analytics Tracking** - Tracks token usage, api calls, and user actions
 - **Intent Re-classification** - Automatically switches assistants mid-conversation
 - **Persistent Conversations** - Stores conversation history by user and site that can be managed
 - **Image Generation** - Generates images based on user prompts using OpenAI's image generation capabilities
@@ -27,11 +25,10 @@ The application has a variety of capabilities to assist users in their tasks:
 ## Tech Stack
 
 - **Operating System**: This is being developed in a Windows environment
-- **Command Line Acces**: When you need to run commands, use PowerShell or Windows Terminal
+- **Command Line Acces**: When you need to run commands on the command line, use PowerShell or Windows Terminal
 - **Frontend**: The application being developed is a Next.js 15 (with App Router), written in React, TypeScript, Tailwind CSS
 - **Backend**: This application uses Next.js API Routes
 - **Database**: There is a PostgreSQL database using a Prisma ORM to store conversation history and analytics data
-- **MCP Integration**: The application has an integration with the @markstiles/sitecore-search-mcp npm package (deployed on Railway) to access Sitecore website content for context when answering user questions 
 - **Deployment**: This application is targeting a Vercel (Next.js app) environment and will host the database with Supabase PostgreSQL
 
 ## Project Architecture
@@ -50,3 +47,11 @@ As the developer for this project, you should approach your work with the follow
 - **Achitectural Thinking** - Consider the overall architecture of the application when making changes or adding new features.
 - **Code Quality** - Write clean, maintainable, and well-documented code. You should follow best practices such as DRY (Don't Repeat Yourself) and KISS (Keep It Simple, Stupid).
 - **Stability and Reliability** - The goal is to create an application is stable and reliable. Write code that is robust and can handle edge cases gracefully.
+
+## Coding Standards
+
+When you're quoting text inside instructions don't use backticks. Just use normal single quotes to denote code or string values.
+
+Don't rely on the proces.env.NODE_ENV variable to determine if you are in development mode. Instead, use a dedicated environment variable when needed. This makes it less dependent on Next and only on your own configuration.
+
+Do not hard code specific rules for development vs production modes. Always use environment variables to control behavior so that it can be adjusted without code changes. You should prefer to make functions small and modular so that behavior can be composed as needed based on configuration.

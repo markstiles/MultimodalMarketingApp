@@ -24,7 +24,6 @@ export default function AssistantBadge({ type }: AssistantBadgeProps) {
         colorClasses[config.color as keyof typeof colorClasses]
       }`}
     >
-      <span className="text-lg">{config.icon}</span>
       <span className="text-sm font-medium">{config.name}</span>
     </div>
   );

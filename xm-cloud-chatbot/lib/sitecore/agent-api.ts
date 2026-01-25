@@ -4,6 +4,11 @@ import { access, mkdir, readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { experimental_createXMCClient } from '@sitecore-marketplace-sdk/xmc';
+import dotenv from 'dotenv';
+
+// Ensure env vars are loaded
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 export type AgentApiUploadAssetArgs = {
   filePath: string;
@@ -47,7 +52,8 @@ let cachedClientCredentialsToken:
 export function hasAgentApiCredentialsConfigured(): boolean {
   return Boolean(
     process.env.SITECORE_AGENT_API_JWT ||
-      (process.env.SITECORE_AGENT_API_CLIENT_ID && process.env.SITECORE_AGENT_API_CLIENT_SECRET)
+    (process.env.SITECORE_AGENT_API_CLIENT_ID && process.env.SITECORE_AGENT_API_CLIENT_SECRET) ||
+    (process.env.OAUTH_CLIENT_ID && process.env.OAUTH_CLIENT_SECRET && process.env.OAUTH_TOKEN_URL)
   );
 }
 
@@ -58,31 +64,40 @@ function getAgentApiBaseUrl(): string {
   );
 }
 
-function getTokenUrl(): string {
-  return process.env.SITECORE_AGENT_API_TOKEN_URL || 'https://auth.sitecorecloud.io/oauth/token';
-}
-
-function getAudience(): string {
-  return process.env.SITECORE_AGENT_API_AUDIENCE || 'https://api.sitecorecloud.io';
-}
-
 export async function getClientCredentialsJwt(): Promise<string | null> {
+  // 1. If a hardcoded JWT is provided (e.g. for development), use it directly.
+  if (process.env.SITECORE_AGENT_API_JWT) {
+    return process.env.SITECORE_AGENT_API_JWT;
+  }
+
+  // 2. Use automation credentials with standard Auth0 flow
+  // Based on testing, ONLY this combination yields a valid token:
+  // Client: SITECORE_AGENT_API_*
+  // URL: https://auth.sitecorecloud.io/oauth/token
+  // Audience: https://api.sitecorecloud.io (Standard Claims)
+  
   const clientId = process.env.SITECORE_AGENT_API_CLIENT_ID;
   const clientSecret = process.env.SITECORE_AGENT_API_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-
-  const now = Date.now();
-  if (cachedClientCredentialsToken && cachedClientCredentialsToken.expiresAtMs - now > 5 * 60 * 1000) {
-    return cachedClientCredentialsToken.token;
+  
+  if (!clientId || !clientSecret) {
+      console.warn('[Agent API] SITECORE_AGENT_API_CLIENT_ID/SECRET not configured.');
+      // Fallback or fail? If we try OAUTH creds here they likely fail with "Grant type not allowed" (403)
+      return null;
   }
+
+  const tokenUrl = 'https://auth.sitecorecloud.io/oauth/token';
+  const audience = 'https://api.sitecorecloud.io'; 
+  const grantType = 'client_credentials';
+
+  console.log(`[Agent API] Requesting Token from ${tokenUrl} for audience ${audience} using Automation Client...`);
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
   body.set('client_secret', clientSecret);
-  body.set('grant_type', 'client_credentials');
-  body.set('audience', getAudience());
+  body.set('grant_type', grantType);
+  body.set('audience', audience);
 
-  const resp = await fetch(getTokenUrl(), {
+  const resp = await fetch(tokenUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -99,6 +114,20 @@ export async function getClientCredentialsJwt(): Promise<string | null> {
   const data = (await resp.json()) as ClientCredentialsTokenResponse;
   if (!data.access_token) {
     throw new Error('Agent API token response missing access_token');
+  }
+
+  // DEBUG: Decode token to verify audience
+  try {
+      const parts = data.access_token.split('.');
+      if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+          console.log('[Agent API] Service Token Acquired. Claims:', { 
+              iss: payload.iss, 
+              aud: payload.aud 
+          });
+      }
+  } catch (e) {
+      console.warn('[Agent API] Failed to decode token claims for debug logging');
   }
 
   cachedClientCredentialsToken = {
@@ -436,3 +465,66 @@ export async function updateAssetViaAgentApi(userId: string, args: AgentApiUpdat
     return text;
   }
 }
+
+// Wrapper for XMC SDK Page Listing
+export async function getAllPagesForSite(siteId: string, language: string, accessToken: string, environmentHost: string) {
+  try {
+     // Initialize the SDK Client
+     // We define the API host explicitly to use the one that works with our token (xmapps-api)
+     // The SDK defaults to edge-platform for 'sites', which rejects our Automation Token.
+     const xmc = await experimental_createXMCClient({
+        getAccessToken: async () => accessToken,
+        // We leave the SDK defaults for the Agent API calls (which use edge-platform)
+     });
+     
+     // 1. Resolve Site Name from Site ID
+     console.log(`[getAllPagesForSite] resolving name for siteId: ${siteId}`);
+     
+     // Manual Fetch Bypass: The SDK's retrieveSite is finicky with base URLs and our specific token.
+     // We know xmapps-api accepts this token and returns the name.
+     const siteNameRes = await fetch(`https://xmapps-api.sitecorecloud.io/api/v1/sites/${siteId}`, {
+        headers: {
+            Authorization: `Bearer ${accessToken}`
+        }
+     });
+
+     if (!siteNameRes.ok) {
+         const txt = await siteNameRes.text();
+         console.error(`[getAllPagesForSite] Name resolution failed: ${siteNameRes.status} ${txt}`);
+         throw new Error(`Could not resolve site name from ID ${siteId} (Status: ${siteNameRes.status})`);
+     }
+
+     const siteData = await siteNameRes.json();
+     const siteName = siteData.name;
+
+     if (!siteName) {
+         throw new Error(`Could not resolve site name from ID ${siteId} (Field missing in response)`);
+     }
+     console.log(`[getAllPagesForSite] Site Name: ${siteName}`);
+
+     // 2. Fetch Pages using SDK (Agent API)
+
+     // 2. Fetch Pages using SDK
+     // This uses the SDK's built-in fetch logic
+     const pagesResult = await xmc.agent.sitesGetAllPagesBySite({
+        path: { siteName },
+        query: { language }
+     });
+
+     const allPages = pagesResult.data || [];
+     console.log(`[getAllPagesForSite] Success. Found ${allPages.length} pages via XMC SDK.`);
+    
+     return allPages.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        displayName: p.displayName || p.name,
+        path: p.path,
+        url: p.url
+     }));
+
+  } catch (error: any) {
+    console.error('Failed to list pages via XM Apps API:', error);
+    throw error;
+  }
+}
+

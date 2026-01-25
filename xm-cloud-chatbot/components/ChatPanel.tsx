@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { MediaAssetContext } from '@/lib/types/editor-messages';
 import { AssistantType } from '@/lib/types/assistant';
+import { getDefaultAssistantType } from '@/lib/prompts/templates';
 import MessageBubble from '@/components/MessageBubble';
 import AssistantBadge from '@/components/AssistantBadge';
 import ConversationHistory from '@/components/ConversationHistory';
@@ -33,13 +34,17 @@ interface Message {
 }
 
 interface ChatPanelProps {
-  applicationContext: ApplicationContext;
-  pagesContext: PagesContext;
-  user: UserInfo;
+  applicationContext?: ApplicationContext;
+  pagesContext?: PagesContext;
+  siteContext?: any;
+  user?: UserInfo;
   environmentHost?: string;
   selectedAsset?: MediaAssetContext;
   selectedComponentId?: string;
   onSendToEditor: (message: unknown) => void;
+  onReloadCanvas?: () => void;
+  onNavigateToPage?: (itemId: string) => void;
+  onExecuteMutation?: (mutation: string, payload?: any) => void;
 }
 
 // Filter out markdown image syntax since images are displayed separately
@@ -55,18 +60,22 @@ function filterStreamContent(content: string): string {
 export default function ChatPanel({
   applicationContext,
   pagesContext,
+  siteContext,
   user,
   environmentHost,
   selectedAsset,
   selectedComponentId,
   onSendToEditor: _onSendToEditor,
+  onReloadCanvas,
+  onNavigateToPage,
+  onExecuteMutation,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState<string | null>(null);
-  const [assistantType, setAssistantType] = useState<AssistantType>('content_auditor');
+  const [assistantType, setAssistantType] = useState<AssistantType>(getDefaultAssistantType());
   const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -82,8 +91,8 @@ export default function ChatPanel({
 
   useEffect(() => {
     // Use the Sitecore User ID from the context as the stable identifier for authentication
-    const userId = user.id;
-    const siteId = pagesContext.siteInfo?.id;
+    const userId = user?.id;
+    const siteId = pagesContext?.siteInfo?.id;
 
     if (!userId || !siteId) return;
 
@@ -116,7 +125,7 @@ export default function ChatPanel({
         setInput(pending);
       }
     })();
-  }, [user.id, pagesContext.siteInfo?.id]);
+  }, [user?.id, pagesContext?.siteInfo?.id]);
 
   const sendMessage = async (
     messageText: string,
@@ -145,9 +154,9 @@ export default function ChatPanel({
     abortControllerRef.current = new AbortController();
 
     try {
-      const userId = user.id;
-      const siteId = pagesContext.siteInfo?.id;
-      const currentPageId = pagesContext.pageInfo?.id;
+      const userId = user?.id;
+      const siteId = pagesContext?.siteInfo?.id;
+      const currentPageId = pagesContext?.pageInfo?.id;
 
       if (!userId || !siteId || !currentPageId) {
         console.error('Missing runtime context details:', { 
@@ -172,9 +181,10 @@ export default function ChatPanel({
           environmentHost,
           selectedAsset,
           selectedComponentId,
-          applicationId: applicationContext.id,
+          applicationId: applicationContext?.id,
           applicationContext,
           pagesContext,
+          siteContext,
           hostUser: user,
         }),
         signal: abortControllerRef.current.signal,
@@ -276,6 +286,45 @@ export default function ChatPanel({
                       
                       return newMessages;
                     });
+                    break;
+
+                  case 'client_action':
+                    if (data.action === 'reload_page_canvas') {
+                      onReloadCanvas?.();
+                    } else if (data.action === 'navigate_to_page' && data.data?.itemId) {
+                      onNavigateToPage?.(data.data.itemId);
+                    } else if (data.action === 'execute_mutation' && data.data?.mutation) {
+                       onExecuteMutation?.(data.data.mutation, data.data.payload);
+                    } else if (data.action === 'auth_required' && data.data?.url) {
+                       console.log('ChatPanel: Auth required, redirecting to', data.data.url);
+                       
+                       // Save state before redirecting
+                        const userId = user?.id;
+                        const siteId = pagesContext?.siteInfo?.id;
+                        if (userId && siteId && conversationId) {
+                            saveChatRecovery({
+                                userId,
+                                siteId,
+                                conversationId,
+                                conversationTitle,
+                                assistantType,
+                                messages: messages.map((m) => ({
+                                    role: m.role,
+                                    content: m.content,
+                                    images: m.images,
+                                    assets: m.assets,
+                                    timestamp: m.timestamp ? m.timestamp.toISOString() : undefined,
+                                })),
+                                pendingMessage: input, // Save current input if any
+                            });
+                        }
+                       
+                       toast.error('Authentication required. Redirecting...');
+                       // Add a small delay so the toast is visible
+                       setTimeout(() => {
+                           window.location.href = data.data.url;
+                       }, 1000);
+                    }
                     break;
 
                   case 'image':
@@ -451,8 +500,8 @@ export default function ChatPanel({
         {showHistory && (
           <div className="w-64 border-r border-gray-200 bg-gray-50">
             <ConversationHistory
-              userId={user.id}
-              siteId={pagesContext.siteInfo?.id ?? ''}
+              userId={user?.id || ''}
+              siteId={pagesContext?.siteInfo?.id || ''}
               currentConversationId={conversationId}
               onSelectConversation={loadConversation}
               onNewConversation={startNewConversation}
