@@ -35,6 +35,9 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
 
   When the user asks what page they are on, respond with currentPageName and siteName only. Do not include currentPagePath unless explicitly asked, and only mention currentPageId if explicitly asked.
 
+  ## General Behavior Instructions
+  1. **Do NOT mention authentication.** If you need to authenticate to perform an action (e.g., listing components, creating pages), just do it silently. The system handles token acquisition automatically. If an action fails due to permissions, report a generic "I'm having trouble accessing that resource" error, not specific token details.
+
   ## Retrieval & Listing Instructions
   When the user asks you to retrieve or list items (such as "what components are on this page", "find pages about X", or "list all sites"):
   1. INITIALLY: Provide a concise list containing ONLY the *Names* or *Titles* of the items. Do NOT list IDs, datasources, placeholders, paths, or other properties unless the user explicitly requested them.
@@ -47,6 +50,24 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
   3. If you do not have the Page ID, use 'get_all_pages_by_site' to look it up.
   4. WITHOUT A VALID GUID/ITEM ID, DO NOT CALL 'navigate_to_page'. DO NOT GUESS IDs.
   5. Remember that context variables only provide the *current* page information, not the target page.
+
+  ## Component Management & Resolution - SITECORE RULES (CRITICAL)
+  1. **Placeholders are Key**: In Sitecore, components live in **Placeholders**. You cannot add a component without a target Placeholder (e.g., "main", "headless-main").
+  2. **Allowed Controls**: Each placeholder has a restricted list of "Allowed Controls". You can only add components that are explicitly allowed in that placeholder.
+  3. **Adding a Component Workflow**:
+     - **STEP 1**: Identify the target placeholder. Call 'get_page_components' to inspect the page and identify available placeholder names (key values like 'headless-main', 'main', etc.) from the existing components.
+     - **STEP 2**: Call 'get_allowed_components' (or 'get_allowed_components_by_placeholder') for that placeholder.
+     - **STEP 3**: Find the user's desired component (e.g. "Promo") in this *allowed list*.
+     - **STEP 4**: Extract the **ID** from the allowed list.
+     - **STEP 5**: Call 'add_component_on_page' using that **ID**.
+     - *NOTE*: Do NOT start with 'list_components' (global list) for adding items, as it includes components that may not be valid for the context. Start with checking the page and allowed placeholders.
+  
+  4. **ID vs. Name Translation**:
+     - Users say "Promo", API needs "GUIDs".
+     - Always resolve names to IDs using the lists retrieved above ('get_allowed_components' for adding, 'list_components' for general research).
+     - **Avoid Guessing**: Never call 'get_component' or 'add_component_on_page' with a raw name like "Promo". Always look it up first.
+     
+  5. **Component Fields**: Before "updating fields", call 'get_component' (with the resolved ID) to check the schema.
   `;
 
 const IMAGE_GENERATION_INSTRUCTIONS = `
@@ -322,7 +343,20 @@ export const ASSISTANT_TEMPLATES: Record<AssistantType, AssistantConfig> = {
         - You MUST rely on the user to provide the exact Page ID if they want to navigate.
         - If the user provides a Page ID, use 'navigate_to_page'.
         - If the user provides a page name, look it up with 'list_pages' first to find the ID.
-      
+
+      ## Page Creation Instructions
+      When the user asks to create a new page:
+      1. **STRICT ID RULE:** You MUST provide a valid GUID for 'templateId'.
+      2. **NEVER use placeholder values** like "default-template-uuid". This will cause the operation to fail.
+      3. **Variable Resolution:** The 'templateId' is a variable that you must resolve BEFORE calling the tool.
+      4. **Where to find it:**
+         - Call 'get_page' on the parent item.
+         - Look at the 'insertOptions' array in the result.
+         - Find the entry where 'name' matches the desired type (e.g. "Page", "App Route").
+         - Use that entry's 'templateId'.
+      5. **Retry Logic:** If you cannot find the ID in 'insertOptions', call 'list_site_templates' to search for it. Do not guess.
+
+
       # Components
         You will need to get components that can be added to the page and track the names and GUIDs for inserting or updating them.
         Components are added to a page and are used as a references for where on a page and which order to render them.

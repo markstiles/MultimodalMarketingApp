@@ -10,6 +10,15 @@ import dotenv from 'dotenv';
 // Ensure env vars are loaded
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
+// FIX: Force the XMC SDK to use the configured Agent API Base URL.
+// The default SDK URL often fails in specific environments, whereas the Agent API URL (used by manual fetches) is reliable.
+// We sync them here to ensure library functions use the "good" URL.
+if (!process.env.EDGE_PLATFORM_PROXY_URL) {
+  const agentBase = process.env.SITECORE_AGENT_API_BASE_URL || 'https://edge-platform.sitecorecloud.io/stream/ai-agent-api';
+  process.env.EDGE_PLATFORM_PROXY_URL = agentBase.replace(/\/+$/, '');
+  console.log(`[Agent API] Overriding SDK EDGE_PLATFORM_PROXY_URL to: ${process.env.EDGE_PLATFORM_PROXY_URL}`);
+}
+
 export type AgentApiUploadAssetArgs = {
   filePath: string;
   name: string;
@@ -86,7 +95,7 @@ export async function getClientCredentialsJwt(): Promise<string | null> {
   }
 
   const tokenUrl = 'https://auth.sitecorecloud.io/oauth/token';
-  const audience = 'https://api.sitecorecloud.io'; 
+  const audience = process.env.SITECORE_AUTH_AUDIENCE || 'https://api.sitecorecloud.io';
   const grantType = 'client_credentials';
 
   console.log(`[Agent API] Requesting Token from ${tokenUrl} for audience ${audience} using Automation Client...`);
@@ -469,59 +478,73 @@ export async function updateAssetViaAgentApi(userId: string, args: AgentApiUpdat
 // Wrapper for XMC SDK Page Listing
 export async function getAllPagesForSite(siteId: string, language: string, accessToken: string, environmentHost: string) {
   try {
-     // Initialize the SDK Client
-     // We define the API host explicitly to use the one that works with our token (xmapps-api)
-     // The SDK defaults to edge-platform for 'sites', which rejects our Automation Token.
-     const xmc = await experimental_createXMCClient({
-        getAccessToken: async () => accessToken,
-        // We leave the SDK defaults for the Agent API calls (which use edge-platform)
-     });
+     const agentBaseUrl = getAgentApiBaseUrl(); 
      
      // 1. Resolve Site Name from Site ID
      console.log(`[getAllPagesForSite] resolving name for siteId: ${siteId}`);
      
-     // Manual Fetch Bypass: The SDK's retrieveSite is finicky with base URLs and our specific token.
-     // We know xmapps-api accepts this token and returns the name.
-     const siteNameRes = await fetch(`https://xmapps-api.sitecorecloud.io/api/v1/sites/${siteId}`, {
-        headers: {
-            Authorization: `Bearer ${accessToken}`
-        }
+     const siteDetailsUrl = `${agentBaseUrl}/api/v1/sites/${siteId}`;
+     const siteDetailRes = await fetch(siteDetailsUrl, {
+         headers: { Authorization: `Bearer ${accessToken}` }
      });
 
-     if (!siteNameRes.ok) {
-         const txt = await siteNameRes.text();
-         console.error(`[getAllPagesForSite] Name resolution failed: ${siteNameRes.status} ${txt}`);
-         throw new Error(`Could not resolve site name from ID ${siteId} (Status: ${siteNameRes.status})`);
+     let siteName: string | undefined;
+
+     if (siteDetailRes.ok) {
+         const siteDetailResponse = await siteDetailRes.json();
+         console.log(`[getAllPagesForSite] sitesGetSiteDetails response:`, JSON.stringify(siteDetailResponse, null, 2));
+         siteName = siteDetailResponse.name || siteDetailResponse.data?.name;
+     } else {
+         console.warn(`[getAllPagesForSite] Agent API failed (${siteDetailRes.status}). Falling back to list iteration.`);
+         // Fallback: Use getSitesList to find the site by ID
+         try {
+             const allSites = await getSitesList(accessToken);
+             const match = allSites.find((s: any) => s.id === siteId);
+             if (match) {
+                 siteName = match.name;
+                 console.log(`[getAllPagesForSite] Resolved name via getSitesList: ${siteName}`);
+             }
+         } catch (e) {
+             console.warn(`[getAllPagesForSite] Fallback list lookup failed:`, e);
+         }
      }
 
-     const siteData = await siteNameRes.json();
-     const siteName = siteData.name;
-
      if (!siteName) {
-         throw new Error(`Could not resolve site name from ID ${siteId} (Field missing in response)`);
+         throw new Error(`Could not resolve site name from ID ${siteId}`);
      }
      console.log(`[getAllPagesForSite] Site Name: ${siteName}`);
 
-     // 2. Fetch Pages using Direct Fetch
-     // The SDK (xmc.agent.sitesGetAllPagesBySite) fails because the API returns a raw array [{...}],
-     // but the SDK likely expects { data: [...] }.
-     const agentBaseUrl = getAgentApiBaseUrl();
-     const pagesUrl = `${agentBaseUrl}/api/v1/sites/${siteName}/pages?language=${language}`;
+     // 2. Fetch Pages
+     console.log(`[getAllPagesForSite] Fetching pages for site: ${siteName}`);
      
-     console.log(`[getAllPagesForSite] Fetching pages from: ${pagesUrl}`);
-     
-     const pagesRes = await fetch(pagesUrl, {
-         headers: {
-             Authorization: `Bearer ${accessToken}`
-         }
+     const pagesUrl = `${agentBaseUrl}/api/v1/sites/${encodeURIComponent(siteName)}/pages?language=${language}`;
+     const responseRes = await fetch(pagesUrl, {
+         headers: { Authorization: `Bearer ${accessToken}` }
      });
 
-     if (!pagesRes.ok) {
-         throw new Error(`Failed to fetch pages: ${pagesRes.status} ${await pagesRes.text()}`);
+     let response;
+     if (!responseRes.ok) {
+        console.warn(`[getAllPagesForSite] Agent API failed (${responseRes.status}). Falling back to xmapps-api.`);
+        const fbUrl = `https://xmapps-api.sitecorecloud.io/api/v1/sites/${encodeURIComponent(siteName)}/pages?language=${language}`;
+        const fbRes = await fetch(fbUrl, {
+             headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        if (!fbRes.ok) {
+             throw new Error(`Failed to list pages via both Agent API and XM Apps API: ${fbRes.status} ${await fbRes.text()}`);
+        }
+        response = await fbRes.json();
+     } else {
+        response = await responseRes.json();
      }
 
-     const allPages = await pagesRes.json();
-     console.log(`[getAllPagesForSite] Success. Found ${allPages.length} pages via Direct Fetch.`);
+     let allPages: any[] = [];
+     if (Array.isArray(response)) {
+         allPages = response;
+     } else if (response && (response as any).data && Array.isArray((response as any).data)) {
+         allPages = (response as any).data;
+     }
+     console.log(`[getAllPagesForSite] Success. Found ${allPages.length} pages.`);
     
      return allPages.map((p: any) => ({
         id: p.id,
@@ -538,30 +561,58 @@ export async function getAllPagesForSite(siteId: string, language: string, acces
 }
 
 export async function getComponentsOnPage(pageId: string, language: string, accessToken: string) {
-  try {
-     const agentBaseUrl = getAgentApiBaseUrl();
-     const url = `${agentBaseUrl}/api/v1/pages/${pageId}/components?language=${language}`;
-     
-     console.log(`[getComponentsOnPage] Fetching components from: ${url}`);
-     
-     const res = await fetch(url, {
-         headers: {
-             Authorization: `Bearer ${accessToken}`
-         }
-     });
+    try {
+       const agentBaseUrl = getAgentApiBaseUrl();
+       console.log(`[getComponentsOnPage] Fetching components for page: ${pageId}`);
+       
+       const url = `${agentBaseUrl}/api/v1/pages/${pageId}/components?language=${language}`;
+       const res = await fetch(url, {
+           headers: { Authorization: `Bearer ${accessToken}` }
+       });
 
-     if (!res.ok) {
-         throw new Error(`Failed to fetch components: ${res.status} ${await res.text()}`);
-     }
+       let response;
 
-     const components = await res.json();
-     console.log(`[getComponentsOnPage] Success. Found ${components.length} components.`);
-     
-     return components; // Return raw component data
-  } catch (error: any) {
-    console.error('Failed to get components via XM Apps API:', error);
-    throw error;
-  }
+       if (!res.ok) {
+            const errorText = await res.text();
+            console.warn(`[getComponentsOnPage] Agent API failed (${res.status}): ${errorText}`);
+
+            // Fallback to xmapps-api if Agent API rejects the token
+            if (res.status === 404 || res.status === 401 || res.status === 403) {
+                 console.log('[getComponentsOnPage] Attempting fallback to xmapps-api...');
+                 const fbUrl = `https://xmapps-api.sitecorecloud.io/api/v1/pages/${pageId}/components?language=${language}`;
+                 const fbRes = await fetch(fbUrl, {
+                     headers: { Authorization: `Bearer ${accessToken}` }
+                 });
+
+                 if (fbRes.ok) {
+                     response = await fbRes.json();
+                     console.log(`[getComponentsOnPage] Fallback success.`);
+                 } else {
+                     console.warn(`[getComponentsOnPage] Fallback failed: ${fbRes.status} ${await fbRes.text()}`);
+                     throw new Error(`Failed to get components on page: ${res.status} ${errorText}`);
+                 }
+            } else {
+                throw new Error(`Failed to get components on page: ${res.status} ${errorText}`);
+            }
+       } else {
+           response = await res.json();
+       }
+
+       let components: any[] = [];
+       if (Array.isArray(response)) {
+           components = response;
+       } else if (response && (response as any).components && Array.isArray((response as any).components)) {
+           components = (response as any).components;
+       } else if (response && (response as any).data && Array.isArray((response as any).data)) {
+           components = (response as any).data;
+       }
+
+       console.log(`[getComponentsOnPage] Success. Found ${components.length} components.`);
+       return components; // Return raw component data
+    } catch (error: any) {
+       console.error('Failed to get components via SDK:', error);
+       throw error;
+    }
 }
 
 export async function getAllowedComponents(pageId: string, placeholderName: string, language: string, accessToken: string) {
@@ -578,7 +629,28 @@ export async function getAllowedComponents(pageId: string, placeholderName: stri
      });
 
      if (!res.ok) {
-         throw new Error(`Failed to fetch allowed components: ${res.status} ${await res.text()}`);
+         const errorText = await res.text();
+         console.warn(`[getAllowedComponents] Agent API failed (${res.status}): ${errorText}`);
+
+         // Fallback to xmapps-api if Agent API rejects the token (Claims mismatch/404/401)
+         if (res.status === 404 || res.status === 401 || res.status === 403) {
+             console.log('[getAllowedComponents] Attempting fallback to xmapps-api...');
+             const fbUrl = `https://xmapps-api.sitecorecloud.io/api/v1/pages/${pageId}/placeholders/${placeholderName}/allowed-components?language=${language}`;
+             
+             const fbRes = await fetch(fbUrl, {
+                 headers: { Authorization: `Bearer ${accessToken}` }
+             });
+             
+             if (fbRes.ok) {
+                 const fbData = await fbRes.json();
+                 console.log(`[getAllowedComponents] Fallback success. Found ${fbData.length} allowed components.`);
+                 return fbData;
+             } else {
+                 console.warn(`[getAllowedComponents] Fallback failed: ${fbRes.status} ${await fbRes.text()}`);
+             }
+         }
+         
+         throw new Error(`Failed to fetch allowed components: ${res.status} ${errorText}`);
      }
 
      const components = await res.json();
@@ -732,7 +804,7 @@ export async function createPage(parentId: string, templateId: string, name: str
 export async function listComponents(siteName: string, accessToken: string) {
   try {
      const agentBaseUrl = getAgentApiBaseUrl();
-     const url = `${agentBaseUrl}/api/v1/components?siteName=${encodeURIComponent(siteName)}`;
+     const url = `${agentBaseUrl}/api/v1/components?site_name=${encodeURIComponent(siteName)}`;
      
      console.log(`[listComponents] Listing components for site '${siteName}'`);
      
@@ -743,11 +815,55 @@ export async function listComponents(siteName: string, accessToken: string) {
      });
 
      if (!res.ok) {
-         throw new Error(`Failed to list components: ${res.status} ${await res.text()}`);
+         const errorText = await res.text();
+         console.warn(`[listComponents] Agent API failed (${res.status}): ${errorText}`);
+
+         // Fallback to xmapps-api
+         if (res.status === 404 || res.status === 401 || res.status === 403) {
+             console.log('[listComponents] Attempting fallback to xmapps-api...');
+             // Try standard query param
+             const fbUrl = `https://xmapps-api.sitecorecloud.io/api/v1/components?site_name=${encodeURIComponent(siteName)}`;
+             const fbRes = await fetch(fbUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+             
+             if (fbRes.ok) {
+                 const fbData = await fbRes.json();
+                 console.log(`[listComponents] Fallback success.`);
+                 return fbData;
+             } else {
+                 console.warn(`[listComponents] Fallback failed: ${fbRes.status}. Retrying with siteName param...`);
+                 // Retry with camelCase just in case
+                 const fbUrl2 = `https://xmapps-api.sitecorecloud.io/api/v1/components?siteName=${encodeURIComponent(siteName)}`;
+                 const fbRes2 = await fetch(fbUrl2, { headers: { Authorization: `Bearer ${accessToken}` } });
+                 if (fbRes2.ok) {
+                     const fbData2 = await fbRes2.json();
+                     console.log(`[listComponents] Fallback (siteName) success.`);
+                     return fbData2;
+                 }
+             }
+         }
+
+         throw new Error(`Failed to list components: ${res.status} ${errorText}`);
      }
 
      const results = await res.json();
-     console.log(`[listComponents] Success. Found ${results.length} components.`);
+     
+     // DEBUG: Log keys to understand structure
+     if (results && typeof results === 'object') {
+         console.log(`[listComponents] Response keys: ${Object.keys(results).join(', ')}`);
+         if ((results as any).components) {
+             console.log(`[listComponents] components type: ${typeof (results as any).components}, isArray: ${Array.isArray((results as any).components)}`);
+         }
+     }
+
+     let count = 'unknown';
+     if (Array.isArray(results)) count = results.length.toString();
+     else if (results.items && Array.isArray(results.items)) count = results.items.length.toString();
+     else if (results.data && Array.isArray(results.data)) count = results.data.length.toString();
+     else if (results.components && Array.isArray(results.components)) count = results.components.length.toString();
+     // Handle case where components is a map
+     else if (results.components && typeof results.components === 'object') count = Object.keys(results.components).length.toString();
+
+     console.log(`[listComponents] Success. Found ${count} components.`);
      return results;
   } catch (error: any) {
     console.error('Failed to list components via XM Apps API:', error);
@@ -755,22 +871,128 @@ export async function listComponents(siteName: string, accessToken: string) {
   }
 }
 
-export async function getComponent(componentName: string, accessToken: string) {
+
+const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isSystemId = (id: string) => GUID_REGEX.test(id);
+
+export async function getComponent(componentName: string, accessToken: string, siteName?: string, pageId?: string) {
   try {
      const agentBaseUrl = getAgentApiBaseUrl();
-     const url = `${agentBaseUrl}/api/v1/components/${encodeURIComponent(componentName)}`;
      
-     console.log(`[getComponent] Getting details for component '${componentName}'`);
+     let targetId = componentName;
+     let foundDetails = null;
+
+     // 1. Attempt Resolution: Translate Name -> ID if possible
+     if (siteName) {
+         try {
+             // Fetch all components for the site to resolve the name
+             const listData = await listComponents(siteName, accessToken);
+             let items: any[] = [];
+             
+             // Normalize list structure (handles Arrays, Objects, embedded 'items'/'data'/'components')
+             if (Array.isArray(listData)) items = listData;
+             else if (listData && Array.isArray((listData as any).items)) items = (listData as any).items;
+             else if (listData && Array.isArray((listData as any).data)) items = (listData as any).data;
+             else if (listData && Array.isArray((listData as any).components)) items = (listData as any).components;
+             else if (listData && (listData as any).components && typeof (listData as any).components === 'object') {
+                 // Handle object map { "CompName": { ... } }
+                 items = Object.entries((listData as any).components).map(([key, value]: [string, any]) => {
+                     // The value MUST be an object to be useful. 
+                     if (value && typeof value === 'object') {
+                         return { 
+                            ...value, 
+                            // Ensure name exists
+                            name: value.name || value.Name || key, 
+                            // Ensure ID exists (map 'itemId', 'id', or maybe the key itself if the values are sparse?)
+                            id: value.id || value.itemId || value.Id
+                         }; 
+                     }
+                     // If value is just a string (rare but possible in some schemas), treat it as ID or Name?
+                     return { name: key, raw: value };
+                 });
+                 // Log one item to verify structure
+                 if (items.length > 0) {
+                    console.log(`[getComponent] Map parsing sample:`, JSON.stringify(items[0]));
+                 }
+             }
+
+             // Find match using Name, Display Name, or ID (Fuzzy Matching)
+             const match = items.find((c: any) => 
+                 c.name === componentName || 
+                 c.displayName === componentName || 
+                 c.id === componentName ||
+                 (c.name && c.name.toLowerCase() === componentName.toLowerCase()) ||
+                 // Be careful with includes() - false positives!
+                 // BUT "PromoBlock" vs "Promo" might need it.
+                 // Let's rely on strict or lowercase match first.
+                 (c.name && componentName.toLowerCase().includes(c.name.toLowerCase())) 
+             );
+
+             // Debug log the search if failing
+             if (!match && items.length > 0) {
+                 console.log(`[getComponent] No match for '${componentName}'. Available names: ${items.map(i => i.name).slice(0, 5).join(', ')}...`);
+             }
+
+
+             if (match) {
+                 console.log(`[getComponent] Resolved '${componentName}' via site list to: ${match.name} (${match.id})`);
+                 if (match.id) targetId = match.id;
+                 foundDetails = match;
+             }
+         } catch (e) {
+             console.warn(`[getComponent] Resolution via site list failed:`, e);
+         }
+     }
+
+     // 2. Fallback Resolution: Try Page Context (Allowed Components) if site name lookup failed or wasn't provided
+     if ((!isSystemId(targetId) || !foundDetails) && pageId) {
+         console.log(`[getComponent] Resolution failed via list. Trying page context for pageId: ${pageId}`);
+         const placeholders = ['headless-main', 'main', 'jss-main', 'content'];
+         
+         for (const ph of placeholders) {
+             try {
+                // We use a manual fetch here to allow silent failures (no thrown errors for missing PHs)
+                const phUrl = `${agentBaseUrl}/api/v1/pages/${pageId}/placeholders/${ph}/allowed-components?language=en`;
+                const phRes = await fetch(phUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+                
+                if (phRes.ok) {
+                    const allowed: any[] = await phRes.json();
+                    if (allowed && allowed.length > 0) {
+                        const match = allowed.find((c: any) => 
+                            c.name === componentName || 
+                            c.displayName === componentName || 
+                            (c.name && c.name.toLowerCase() === componentName.toLowerCase())
+                        );
+                        if (match) {
+                             console.log(`[getComponent] Resolved '${componentName}' via placeholder '${ph}' to: ${match.name} (${match.id})`);
+                             if (match.id) targetId = match.id;
+                             foundDetails = match;
+                             break;
+                        }
+                    }
+                }
+             } catch (e) { /* ignore */ }
+         }
+     }
+
+     // 3. Fetch Details: Logic Rule - Only fetch by ID
+     // We should not expect the API to understand a Name in the ID slot.
+     if (!isSystemId(targetId)) {
+        console.warn(`[getComponent] '${targetId}' is not a System ID (GUID) and resolution returned no matches. Skipping direct fetch.`);
+        // If we found partial details in the list (but maybe no ID?), return that, otherwise null.
+        return foundDetails || null;
+     }
+
+     const url = `${agentBaseUrl}/api/v1/components/${targetId}`;
+     console.log(`[getComponent] Fetching details for ID: ${targetId}`);
      
      const res = await fetch(url, {
-         headers: {
-             Authorization: `Bearer ${accessToken}`
-         }
+         headers: { Authorization: `Bearer ${accessToken}` }
      });
 
      if (!res.ok) {
          console.warn(`[getComponent] Failed to get component: ${res.status}`);
-         return null; 
+         return foundDetails || null; 
      }
 
      const result = await res.json();
@@ -786,12 +1008,63 @@ export async function getComponent(componentName: string, accessToken: string) {
 //  Pages API / Agent API - Write Operations
 // --------------------------------------------------------------------------
 
-export async function addComponentOnPage(pageId: string, componentName: string, placeholderName: string, language: string, accessToken: string) {
+export async function addComponentOnPage(pageId: string, componentName: string, placeholderName: string, language: string, accessToken: string, siteName?: string) {
   try {
      const agentBaseUrl = getAgentApiBaseUrl();
      const url = `${agentBaseUrl}/api/v1/pages/${pageId}/components`;
      
-     console.log(`[addComponentOnPage] Adding '${componentName}' to '${placeholderName}' on page '${pageId}'`);
+     console.log(`[addComponentOnPage] Resolving Component ID for '${componentName}'...`);
+     
+     let componentId = '';
+     
+     // 0. If it's already a GUID, use it directly
+     if (isSystemId(componentName)) {
+         componentId = componentName;
+     } else {
+         // 1. Try resolving via getComponent (Global List + Page Context Fallbacks)
+         try {
+             const resolved = await getComponent(componentName, accessToken, siteName, pageId);
+             if (resolved && resolved.id) {
+                 componentId = resolved.id;
+                 console.log(`[addComponentOnPage] Resolved '${componentName}' via getComponent to: ${resolved.name} (${componentId})`);
+             }
+         } catch (e) {
+             console.warn(`[addComponentOnPage] getComponent resolution failed:`, e);
+         }
+
+         // 2. If getComponent failed (or didn't verify ID), try User's Placeholder specifically
+         // (getComponent checks specific list of 'main', 'headless-main' etc, but maybe user passed 'content-block')
+         if (!componentId) {
+             try {
+                 console.log(`[addComponentOnPage] Trying placeholder-specific lookup for '${placeholderName}'...`);
+                 const allowed = await getAllowedComponents(pageId, placeholderName, language, accessToken);
+                 const match = allowed.find((c: any) => 
+                    c.name === componentName || 
+                    c.displayName === componentName ||
+                    (c.name && c.name.toLowerCase() === componentName.toLowerCase())
+                 );
+                 if (match) {
+                     componentId = match.id;
+                     console.log(`[addComponentOnPage] Resolved '${componentName}' via allowed-components to: ${componentId}`);
+                 }
+             } catch (e) {
+                 console.warn(`[addComponentOnPage] Failed to lookup component ID in placeholder:`, e);
+             }
+         }
+     }
+
+     if (!componentId) {
+         throw new Error(`Could not resolve Component ID for '${componentName}'. Please ensure it is an allowed component in '${placeholderName}' or provide the exact Component ID.`);
+     }
+
+     // Generate a unique name for the component instance to avoid duplicate name errors
+     // e.g. "Promo-1729384"
+     const uniqueSuffix = Date.now().toString().slice(-6);
+     // Clean component name for item name usage (remove spaces/special chars if needed, though usually fine)
+     const cleanName = componentName.replace(/[^a-zA-Z0-9-_]/g, '');
+     const instanceName = `${cleanName}-${uniqueSuffix}`;
+
+     console.log(`[addComponentOnPage] Adding '${instanceName}' (Rendering: ${componentId}) to '${placeholderName}' on page '${pageId}'`);
      
      const res = await fetch(url, {
          method: 'POST',
@@ -800,8 +1073,9 @@ export async function addComponentOnPage(pageId: string, componentName: string, 
              'Content-Type': 'application/json'
          },
          body: JSON.stringify({
-            componentName,
-            placeholderName,
+            componentItemName: instanceName, 
+            componentRenderingId: componentId, 
+            placeholderPath: placeholderName,  
             language
          })
      });
@@ -868,9 +1142,33 @@ export async function updateContent(params: { id: string; language: string; fiel
             })
         });
 
-        if (!res.ok) {
-            throw new Error(`Failed to update content item: ${res.status} ${await res.text()}`);
-        }
+            // General Rule: If an update fails, the schema might be mismatched. 
+            // Attempt to retrieve the current item state to provide available fields in the error.
+            if (!res.ok) {
+                 const errorText = await res.text();
+                 
+                 // If the request was bad (400) or failed server side (500), 
+                 // it's likely due to invalid field data vs schema.
+                 if (res.status === 400 || res.status === 500) {
+                     try {
+                         console.log(`[updateContent] Update failed (${res.status}). Attempting to fetch item schema to assist debugging...`);
+                         // Try to fetch the item to see its fields
+                         const getUrl = `${agentBaseUrl}/api/v1/content/${params.id}?language=${params.language}&expand=fields`; 
+                         const getRes = await fetch(getUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+                         if (getRes.ok) {
+                             const itemData = await getRes.json();
+                             const availableFields = itemData.fields ? Object.keys(itemData.fields).join(', ') : 'unknown';
+                             throw new Error(`Failed to update content item: ${res.status} ${errorText}. \nAVAILABLE FIELDS for this item are: [${availableFields}]. Please retry using these exact field names.`);
+                         }
+                     } catch (inner: any) {
+                         // If we successfully threw the enriched error, let it bubble up.
+                         // But if the FETCH failed (getRes not ok) or inner threw something else, just ignore and throw original.
+                         if (inner.message && inner.message.includes('AVAILABLE FIELDS')) throw inner;
+                     }
+                 }
+                
+                throw new Error(`Failed to update content item: ${res.status} ${errorText}`);
+            }
 
         const result = await res.json();
         console.log(`[updateContent] Success.`);
@@ -911,21 +1209,37 @@ export async function deleteContent(itemId: string, accessToken: string) {
 export async function getSitesList(accessToken: string) {
     try {
        const agentBaseUrl = getAgentApiBaseUrl();
-       const url = `${agentBaseUrl}/api/v1/sites`;
-       
        console.log(`[getSitesList] Listing all sites`);
        
+       const url = `${agentBaseUrl}/api/v1/sites`;
        const res = await fetch(url, {
-           headers: {
-               Authorization: `Bearer ${accessToken}`
-           }
+           headers: { Authorization: `Bearer ${accessToken}` }
        });
-  
+       
+       let response;
+
        if (!res.ok) {
-           throw new Error(`Failed to list sites: ${res.status} ${await res.text()}`);
+           console.warn(`[getSitesList] Agent API failed (${res.status}). Falling back to xmapps-api.`);
+           const fbUrl = 'https://xmapps-api.sitecorecloud.io/api/v1/sites';
+           const fbRes = await fetch(fbUrl, {
+               headers: { Authorization: `Bearer ${accessToken}` }
+           });
+           
+           if (!fbRes.ok) {
+               throw new Error(`Failed to list sites via both Agent API and XM Apps API: ${fbRes.status} ${await fbRes.text()}`);
+           }
+           response = await fbRes.json();
+       } else {
+            response = await res.json();
        }
-  
-       const data = await res.json();
+       
+       let data: any[] = [];
+       if (Array.isArray(response)) {
+           data = response;
+       } else if (response && (response as any).data && Array.isArray((response as any).data)) {
+           data = (response as any).data;
+       }
+
        console.log(`[getSitesList] Success. Found ${data.length} sites.`);
        return data;
     } catch (error: any) {
@@ -974,78 +1288,174 @@ export async function listJobs(accessToken: string) {
 // --- Agent API Additional Wrappers ---
 
 export async function getAssetInformation(assetId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.assetsGetAssetInformation({ assetId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/assets/${assetId}?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get asset info: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get asset info:', error);
+        throw error;
+    }
 }
 
 export async function searchAssets(query: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.assetsSearchAssets({ query, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/assets/search?query=${encodeURIComponent(query)}&language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to search assets: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to search assets:', error);
+        throw error;
+    }
 }
 
-// NOTE: assetsUploadAsset and assetsUpdateAsset are handled by custom functions at top of file, 
-// ensuring we use the correct FormData logic.
+// NOTE: assetsUploadAsset and assetsUpdateAsset are handled by custom functions at top of file.
 
 export async function createComponentDatasource(name: string, templateId: string, locationId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.componentsCreateComponentDatasource({ name, templateId, locationId, language });
+    try {
+        // Fallback to Content Item creation as args suggest generic item creation
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/content/create`;
+        const res = await fetch(url, {
+             method: 'POST',
+             headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+             body: JSON.stringify({ name, templateId, parentId: locationId, language })
+        });
+        if (!res.ok) throw new Error(`Failed to create component datasource (content item): ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+         console.error('Failed to create component datasource:', error);
+         throw error;
+    }
 }
 
 export async function searchComponentDatasources(query: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.componentsSearchComponentDatasources({ query, language });
+     // NOTE: Original wrapper lacked componentId context. Falling back to generic content/asset search or returning empty?
+     // For now, let's try a generic content search or similar if available, or just search assets as fallback.
+     console.warn('[searchComponentDatasources] context missing componentId, falling back to asset search pattern for now.');
+     return searchAssets(query, accessToken, language);
 }
 
 export async function listAvailableInsertOptions(itemId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.contentListAvailableInsertoptions({ itemId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/content/${itemId}/insert-options?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to list insert options: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to list insert options:', error);
+        throw error;
+    }
 }
 
 export async function addLanguageToPage(pageId: string, language: string, version: number, accessToken: string) {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.pagesAddLanguageToPage({ pageId, language, version });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/pages/${pageId}/add-language`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ language, version })
+        });
+        if (!res.ok) throw new Error(`Failed to add language to page: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to add language to page:', error);
+        throw error;
+    }
 }
 
 export async function getPagePreviewUrl(pageId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.pagesGetPagePreviewUrl({ pageId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/pages/${pageId}/preview-url?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get preview url: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get page preview url:', error);
+        throw error;
+    }
 }
 
 export async function getPageScreenshot(pageId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.pagesGetPageScreenshot({ pageId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/pages/${pageId}/screenshot?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get page screenshot: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get page screenshot:', error);
+        throw error;
+    }
 }
 
 export async function setComponentDatasource(pageId: string, componentId: string, datasourceId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.pagesSetComponentDatasource({ pageId, componentId, datasourceId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/pages/${pageId}/components/${componentId}/datasource`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ datasourceId, language })
+        });
+        if (!res.ok) throw new Error(`Failed to set component datasource: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to set component datasource:', error);
+        throw error;
+    }
 }
 
 export async function createPersonalizationVersion(pageId: string, conditionId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.personalizationCreatePersonalizationVersion({ pageId, conditionId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/personalization/${pageId}/versions`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conditionId, language })
+        });
+        if (!res.ok) throw new Error(`Failed to create personalization version: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to create personalization version:', error);
+        throw error;
+    }
 }
 
 export async function getPersonalizationVersionsByPage(pageId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.personalizationGetPersonalizationVersionsByPage({ pageId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/personalization/by-page/${pageId}?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get personalization versions: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get personalization versions:', error);
+        throw error;
+    }
 }
 
 export async function getSiteDetails(siteName: string, accessToken: string) {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.sitesGetSiteDetails({ siteName });
+    try {
+        // Resolve site by name from list
+        const sites = await getSitesList(accessToken);
+        const match = sites.find((s:any) => s.name === siteName);
+        if (!match) {
+             throw new Error(`Site '${siteName}' not found`);
+        }
+        return match;
+    } catch (error: any) {
+        console.error('Failed to get site details:', error);
+        throw error;
+    }
 }
 
 // --- Pages API Additional Wrappers ---
@@ -1077,31 +1487,147 @@ export async function createSite(name: string, templateId: string, accessToken: 
 }
 
 export async function deleteSite(siteId: string, accessToken: string) {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.sites.deleteSite({ siteId });
+    try {
+        const xmappsBaseUrl = 'https://xmapps-api.sitecorecloud.io';
+        console.log(`[deleteSite] Deleting site: ${siteId} via XM Apps API`);
+        const url = `${xmappsBaseUrl}/api/v1/sites/${siteId}`;
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!res.ok) throw new Error(`Failed to delete site: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to delete site via Agent API:', error);
+        throw error;
+    }
 }
 
-export async function listPageChildren(itemId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.sites.listPageChildren({ itemId, language });
+export async function listPageChildren(itemId: string, accessToken: string, language: string = 'en', siteId?: string) {
+  try {
+     if (!siteId) {
+         throw new Error('siteId is required to list page children via Agent API fallback.');
+     }
+
+     // STRATEGY CHANGE: Use Service Token if available.
+     // The Agent API endpoints (used by getPage, getAllPagesForSite) generally require a Service Token (Client Credentials).
+     // User Tokens often fail with "Failed to extract claims".
+     // We try to upgrade to a Service Token to perform this read operation reliably.
+     let serviceToken = null;
+     try {
+        serviceToken = await getClientCredentialsJwt();
+     } catch (tokenErr) {
+        console.warn(`[listPageChildren] Service Token request failed (${(tokenErr as any).message}). Continuing with User Token.`);
+     }
+
+     const tokenToUse = serviceToken || accessToken;
+     
+     if (serviceToken) {
+         console.log(`[listPageChildren] Using Service Token for reliable Agent API access.`);
+     } else {
+         console.warn(`[listPageChildren] No Service Token available. Using User Token (may fail on Agent API).`);
+     }
+
+     console.log(`[listPageChildren] Using getAllPagesForSite logic to find children of ${itemId}`);
+     
+     // 1. Get All Pages for the Site first
+     // This uses the tokenToUse (Service Token preferred)
+     console.log(`[listPageChildren] Fetching all pages to resolve hierarchy...`);
+     const allPages = await getAllPagesForSite(siteId, language, tokenToUse, '');
+
+     // 2. Find Parent Page within the list
+     const parentPage = allPages.find((p: any) => p.id === itemId);
+
+     if (!parentPage || !parentPage.path) {
+         console.warn(`[listPageChildren] Parent ${itemId} not found in site list. Checking directly via getPage...`);
+         // Emergency fallback: Try to fetch the parent page directly (in case it's not in the list for some reason)
+         try {
+             const directParent = await getPage(itemId, language, tokenToUse);
+             if (directParent && directParent.path) {
+                 const pPath = directParent.path.endsWith('/') ? directParent.path : directParent.path + '/';
+                 return filterChildren(allPages, itemId, pPath);
+             }
+         } catch (e) {
+            // Ignore
+         }
+         throw new Error(`Could not resolve parent page path for itemId: ${itemId} within site listing.`);
+     }
+
+     const parentPath = parentPage.path.endsWith('/') ? parentPage.path : parentPage.path + '/';
+     console.log(`[listPageChildren] Parent Path: ${parentPath}`);
+     
+     return filterChildren(allPages, itemId, parentPath);
+
+  } catch (error: any) {
+    console.error('Failed to list children via Agent API Fallback:', error);
+    throw error;
+  }
+}
+
+function filterChildren(allPages: any[], parentId: string, parentPath: string) {
+     const children = allPages.filter((p: any) => {
+         // Filter out the parent itself
+         if (p.id === parentId || p.path === parentPath.slice(0, -1)) return false;
+         
+         const pPath = p.path;
+         if (!pPath.startsWith(parentPath)) return false;
+         
+         const relative = pPath.substring(parentPath.length);
+         // If relative path has no slashes, it's a direct child. 
+         return !relative.includes('/');
+     });
+
+     console.log(`[listPageChildren] Success. Found ${children.length} children.`);
+     return children;
 }
 
 
 // --- Comprehensive Site Management Wrappers ---
 
 export async function getFavoriteSiteTemplates(accessToken: string) {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.sites.getFavoriteSiteTemplates({});
+    try {
+        const xmappsBaseUrl = 'https://xmapps-api.sitecorecloud.io';
+        const url = `${xmappsBaseUrl}/api/v1/favorites/sitetemplates`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get favorite site templates: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get favorite site templates:', error);
+        throw error;
+    }
 }
 
 export async function listSiteTemplates(accessToken: string) {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.sites.listSiteTemplates({});
+  try {
+      const xmappsBaseUrl = 'https://xmapps-api.sitecorecloud.io'; 
+      const url = `${xmappsBaseUrl}/api/v1/sites/templates`;
+      console.log(`[listSiteTemplates] fetching from: ${url}`);
+      
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) throw new Error(`Failed to list site templates: ${res.status} ${await res.text()}`);
+
+      const response = await res.json();
+      console.log(`[listSiteTemplates] Raw Response:`, JSON.stringify(response, null, 2));
+
+      let templates: any[] = [];
+      if (Array.isArray(response)) {
+          templates = response;
+      } else if (response && (response as any).templates && Array.isArray((response as any).templates)) {
+          templates = (response as any).templates;
+      } else if (response && (response as any).data && Array.isArray((response as any).data)) {
+          templates = (response as any).data;
+      } else if (response && (response as any).items && Array.isArray((response as any).items)) {
+          templates = (response as any).items;
+      }
+
+      console.log(`[listSiteTemplates] Success. Found ${templates.length} templates.`);
+      return templates;
+    } catch (error: any) {
+      console.error('Failed to list site templates via SDK:', error);
+      throw error;
+    }
 }
+
 
 export async function getRenderingHosts(accessToken: string) {
     const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
@@ -1142,15 +1668,29 @@ export async function deleteLanguage(language: string, accessToken: string) {
 // --- Personalization Wrappers ---
 
 export async function getConditionTemplates(accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.personalizationGetConditionTemplates({ language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/personalization/condition-templates?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get condition templates: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get condition templates:', error);
+        throw error;
+    }
 }
 
 export async function getConditionTemplateById(templateId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.personalizationGetConditionTemplateById({ templateId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/personalization/condition-templates/${templateId}?language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get condition template by id: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get condition template by id:', error);
+        throw error;
+    }
 }
 
 // --- Page Service Wrappers ---
@@ -1174,9 +1714,16 @@ export async function saveLayout(pageId: string, layout: any, accessToken: strin
 }
 
 export async function getPageTemplateById(templateId: string, accessToken: string, language: string = 'en') {
-    const xmc = await experimental_createXMCClient({ getAccessToken: async () => accessToken });
-    // @ts-ignore
-    return await xmc.agent.pagesGetPageTemplateById({ templateId, language });
+    try {
+        const agentBaseUrl = getAgentApiBaseUrl();
+        const url = `${agentBaseUrl}/api/v1/pages/template-by-id?templateId=${templateId}&language=${language}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!res.ok) throw new Error(`Failed to get page template by id: ${res.status} ${await res.text()}`);
+        return await res.json();
+    } catch (error: any) {
+        console.error('Failed to get page template by id:', error);
+        throw error;
+    }
 }
 
 

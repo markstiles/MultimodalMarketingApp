@@ -19,6 +19,7 @@
 * UI
     * audio interface
     * polish up the UI to be less web 2.0 
+    * need a cancel button
 * tooling
     * any type of update function should be approved first by the user. 
     * after any content update the page should be refreshed

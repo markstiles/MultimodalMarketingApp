@@ -181,7 +181,7 @@ export default function EditorPanelPage() {
   const onExecuteMutation = (mutation: string, payload?: any) => {
     if (client) {
        console.log(`Executing mutation ${mutation} via Marketplace SDK...`, payload);
-       client.mutate(mutation, payload);
+       client.mutate(mutation as any, payload);
     } else {
        console.warn(`Cannot execute mutation ${mutation}: Client not initialized`);
     }

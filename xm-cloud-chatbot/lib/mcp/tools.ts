@@ -304,19 +304,23 @@ export const GET_COMPONENT_TOOL = {
   type: 'function' as const,
   function: {
     name: 'get_component',
-    description: 'Get details about a specific component, including its available fields and datasource requirements.',
-    parameters: {
-      type: 'object',
-      properties: {
-        componentName: {
-          type: 'string',
-          description: 'The name of the component (e.g. "ContentBlock", "Hero").',
+      description: 'Get details about a specific component, including its available fields and datasource requirements. If you cannot find the component by name alone, provide the pageId to search within that page\'s context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          componentName: {
+            type: 'string',
+            description: 'The name of the component (e.g. "ContentBlock", "Hero").',
+          },
+          pageId: {
+            type: 'string',
+            description: 'Optional. The ID of the page where this component is used. Providing this helps resolve component names to IDs by checking the page context.',
+          }
         },
+        required: ['componentName'],
       },
-      required: ['componentName'],
     },
-  },
-};
+  };
 
 export const SEARCH_SITE_TOOL = {
   type: 'function' as const,
@@ -597,6 +601,7 @@ export const LIST_PAGE_CHILDREN_TOOL = {
             type: 'object',
             properties: {
                 itemId: { type: 'string' },
+                siteId: { type: 'string', description: 'The site ID (required for hierarchy lookup).' },
                 language: { type: 'string' }
             },
             required: ['itemId']

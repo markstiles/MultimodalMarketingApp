@@ -75,7 +75,6 @@ export async function GET(req: NextRequest) {
         ? new URL(process.env.OAUTH_AUTHORIZATION_URL).origin
         : 'https://edge-platform.sitecorecloud.io';
       const expectedResource =
-        process.env.OAUTH_RESOURCE ||
         process.env.OAUTH_AUDIENCE ||
         process.env.MARKETER_MCP_URL ||
         'https://edge-platform.sitecorecloud.io/mcp/marketer-mcp-prod';
@@ -102,7 +101,29 @@ export async function GET(req: NextRequest) {
           console.log('User already has valid MCP token, redirecting...');
           const redirectUrl = new URL(state.redirectUri, process.env.NEXT_PUBLIC_BASE_URL!);
           redirectUrl.searchParams.set('auth_success', 'true');
-          return NextResponse.redirect(redirectUrl.toString());
+          
+          // Return HTML that posts a message to the opener (popup pattern)
+          return new NextResponse(
+            `<html>
+              <body>
+                <script>
+                  if (window.opener) {
+                    window.opener.postMessage({ type: 'AUTH_SUCCESS', userId: '${state.userId}' }, '*');
+                    window.close();
+                  } else {
+                    window.location.href = '${redirectUrl.toString()}';
+                  }
+                </script>
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
+                  <h2>Authentication Successful</h2>
+                  <p>You can close this window now.</p>
+                </div>
+              </body>
+            </html>`,
+            {
+              headers: { 'Content-Type': 'text/html' },
+            }
+          );
         }
 
         console.log('Existing token does not match expected issuer/resource; re-authenticating.');
@@ -310,11 +331,31 @@ async function processTokenResponse(tokenData: any, state: { userId: string; red
     },
   });
 
-  // Redirect back to the app
+  // Redirect back to the app (using Popup Pattern)
   const redirectUrl = new URL(state.redirectUri, process.env.NEXT_PUBLIC_BASE_URL!);
   redirectUrl.searchParams.set('auth_success', 'true');
   
-  const response = NextResponse.redirect(redirectUrl.toString());
+  const response = new NextResponse(
+    `<html>
+      <body>
+        <script>
+          if (window.opener) {
+            window.opener.postMessage({ type: 'AUTH_SUCCESS', userId: '${state.userId}' }, '*');
+            window.close();
+          } else {
+            window.location.href = '${redirectUrl.toString()}';
+          }
+        </script>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;">
+          <h2>Authentication Successful</h2>
+          <p>You can close this window now.</p>
+        </div>
+      </body>
+    </html>`,
+    {
+      headers: { 'Content-Type': 'text/html' },
+    }
+  );
   
   // Clear the PKCE code verifier cookie
   response.cookies.delete('pkce_code_verifier');

@@ -1,0 +1,13 @@
+Navigate: Open the healthy diet page
+
+Create Page: I'd like to add a new page under the healthy diet page called "Influence of Food"
+
+Navigate to Page: can you open that page
+
+List Fields for Component: I want to add a 'Promo' component on the page. can you tell me what the fields it has?
+
+Generate Content: I want this page to be about the overall influence of food on several topics including exercise, sleep and health. Can you generate a title and description for each of those topics for me to review. 
+
+Add Component: Can you add a component for each topic and populate the title and description for those components?
+
+Update Fields:

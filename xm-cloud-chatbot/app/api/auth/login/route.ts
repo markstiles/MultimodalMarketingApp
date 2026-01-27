@@ -61,7 +61,6 @@ export async function GET(req: NextRequest) {
 
   // Add resource parameter for Marketer MCP
   const resource =
-    process.env.OAUTH_RESOURCE ||
     process.env.OAUTH_AUDIENCE ||
     'https://edge-platform.sitecorecloud.io/mcp/marketer-mcp-prod';
   authUrl.searchParams.set('resource', resource);

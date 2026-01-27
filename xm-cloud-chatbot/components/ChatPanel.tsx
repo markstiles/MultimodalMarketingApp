@@ -81,6 +81,19 @@ export default function ChatPanel({
   const abortControllerRef = useRef<AbortController | null>(null);
   const resumingFromAuthRef = useRef(false);
 
+  // Listen for popup auth success messages
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'AUTH_SUCCESS') {
+            toast.dismiss(); // dismiss all toasts (including the login prompt)
+            toast.success('Authentication successful!');
+            resumingFromAuthRef.current = true;
+        }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -319,11 +332,21 @@ export default function ChatPanel({
                             });
                         }
                        
-                       toast.error('Authentication required. Redirecting...');
-                       // Add a small delay so the toast is visible
-                       setTimeout(() => {
-                           window.location.href = data.data.url;
-                       }, 1000);
+                       // Use a custom toast with a button to handle the popup properly and avoid iframe issues
+                       toast((t) => (
+                           <div className="flex flex-col gap-2">
+                               <span>Authentication required to continue.</span>
+                               <button 
+                                   onClick={() => {
+                                       window.open(data.data.url, '_blank');
+                                       toast.dismiss(t.id);
+                                   }}
+                                   className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors"
+                               >
+                                   Log in with Sitecore
+                               </button>
+                           </div>
+                       ), { duration: Infinity, icon: '🔒' });
                     }
                     break;
 

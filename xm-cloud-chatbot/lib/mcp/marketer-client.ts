@@ -90,7 +90,6 @@ export class MarketerMCPClient {
 
   private getExpectedResource(): string {
     return (
-      process.env.OAUTH_RESOURCE ||
       process.env.OAUTH_AUDIENCE ||
       process.env.MARKETER_MCP_URL ||
       'https://edge-platform.sitecorecloud.io/mcp/marketer-mcp-prod'
@@ -527,7 +526,6 @@ export async function checkMarketerMCPAuth(
         : 'https://edge-platform.sitecorecloud.io'
       ).replace(/\/+$/, '');
       const expectedResource = (
-        process.env.OAUTH_RESOURCE ||
         process.env.OAUTH_AUDIENCE ||
         process.env.MARKETER_MCP_URL ||
         'https://edge-platform.sitecorecloud.io/mcp/marketer-mcp-prod'
