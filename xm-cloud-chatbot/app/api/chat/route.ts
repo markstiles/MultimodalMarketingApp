@@ -46,6 +46,7 @@ import {
 import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/utils/db-errors';
 import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
 import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
+import { getSmartToken } from '@/lib/utils/server-auth-helpers';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -919,27 +920,9 @@ export async function POST(req: NextRequest) {
                          throw new Error('No page ID provided or found in context.');
                     }
 
-                    // Auth Strategy: Force User Context
-                    let userToken: string | null = null;
-                    const contextToken = (applicationContext as any)?.auth?.accessToken;
-                    if (contextToken) userToken = contextToken;
-                    
-                    if (!userToken) {
-                        const tokenEntry = await prisma.oAuthToken.findUnique({ where: { userId } });
-                        if (tokenEntry && tokenEntry.accessToken && tokenEntry.expiresAt >= new Date()) {
-                            userToken = tokenEntry.accessToken;
-                        }
-                    }
+                    const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
 
-                    if (!userToken) {
-                        const referer = req.headers.get('referer') || '';
-                        const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                        emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                        await new Promise(r => setTimeout(r, 100));
-                        throw new Error(`Authentication required to view components.`);
-                    }
-
-                    const componentsResult = await getComponentsOnPage(reqPageId, language, userToken);
+                    const componentsResult = await getComponentsOnPage(reqPageId, language, tokenToUse);
                     
                     const result = { components: componentsResult };
                     
@@ -995,18 +978,9 @@ export async function POST(req: NextRequest) {
                     if (!reqPageId) throw new Error('No page ID provided.');
                     if (!ph) throw new Error('No placeholder name provided.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getAllowedComponents(reqPageId, ph, language, userToken);
+                        const resultData = await getAllowedComponents(reqPageId, ph, language, tokenToUse);
                     
                     const result = { allowedComponents: resultData };
                     toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1025,18 +999,9 @@ export async function POST(req: NextRequest) {
                     const language = (args as any).language || 'en';
                     if (!reqPageId) throw new Error('No page ID provided.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getPage(reqPageId, language, userToken);
+                        const resultData = await getPage(reqPageId, language, tokenToUse);
                     
                     const result = { page: resultData };
                     toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1055,18 +1020,9 @@ export async function POST(req: NextRequest) {
                     const language = (args as any).language || 'en';
                     if (!reqPageId) throw new Error('No page ID provided.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getPageHtml(reqPageId, language, userToken);
+                        const resultData = await getPageHtml(reqPageId, language, tokenToUse);
                     // Truncate huge HTML if needed, but usually we want it all for analysis. 
                     // Warning: massive HTML can blow up context window.
                     const result = { html: resultData }; 
@@ -1085,18 +1041,9 @@ export async function POST(req: NextRequest) {
                     const url = (args as any).url;
                     if (!url) throw new Error('No URL provided.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getPagePathByUrl(url, userToken);
+                        const resultData = await getPagePathByUrl(url, tokenToUse);
                     
                     const result = resultData;
                     toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1125,18 +1072,9 @@ export async function POST(req: NextRequest) {
                         if (!reqSiteName) throw new Error('No site name provided or found.');
                         if (!query) throw new Error('No search query provided.');
 
-                            const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                             
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await searchSite(reqSiteName, query, language, userToken);
+                            const resultData = await searchSite(reqSiteName, query, language, tokenToUse);
                         
                         const result = { results: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1173,19 +1111,9 @@ export async function POST(req: NextRequest) {
                         const reqSiteName = (args as any).siteName || siteName;
                         if (!reqSiteName) throw new Error('No site name provided or found.');
 
-                        // Force User Context
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await listComponents(reqSiteName, userToken);
+                        const resultData = await listComponents(reqSiteName, tokenToUse);
                         
                         const result = { components: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1216,19 +1144,9 @@ export async function POST(req: NextRequest) {
                         const pageId = (args as any).pageId || currentPageId;
                         if (!componentName) throw new Error('No component name provided.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const effectiveSiteName = (args as any).siteName || siteName;
-                        const resultData = await getComponent(componentName, userToken, effectiveSiteName, pageId);
+                        const resultData = await getComponent(componentName, pageId, tokenToUse);
                         
                         const result = { component: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1255,20 +1173,9 @@ export async function POST(req: NextRequest) {
                      // Do not execute local logic; fall through to generic MCP handler at the end of loop
                   } else {
                       try {
-                        // Force User Context
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             // tiny delay to ensure emit goes out
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getSitesList(userToken);
+                        const resultData = await getSitesList(tokenToUse);
                         
                         const result = { sites: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1291,18 +1198,9 @@ export async function POST(req: NextRequest) {
                         // Fall through to MCP generic handler
                     } else {
                         try {
-                            const userToken = (applicationContext as any)?.auth?.accessToken ||  
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
-                            
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await listSiteCollections(userToken);
+                            const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
+                        
+                            const resultData = await listSiteCollections(tokenToUse);
                             const result = { collections: resultData };
                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1318,18 +1216,9 @@ export async function POST(req: NextRequest) {
 
                 if (accumulated.name === 'get_favorite_sites') {
                     try {
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getFavoriteSites(userToken);
+                        const resultData = await getFavoriteSites(tokenToUse);
                         const result = { favorites: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1348,18 +1237,9 @@ export async function POST(req: NextRequest) {
                         // Fall through to MCP generic handler
                     } else {
                         try {
-                            const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
-                            
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await listLanguages(userToken);
+                            const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
+                        
+                            const resultData = await listLanguages(tokenToUse);
                             const result = { languages: resultData };
                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1379,19 +1259,10 @@ export async function POST(req: NextRequest) {
                         const language = (args as any).language || 'en';
                         if (!siteId || !pageId) throw new Error('Missing siteId or pageId');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await aggregatePageData(siteId, pageId, userToken, language);
-                        const result = { aggregation: resultData };
+                        const resultData = await aggregatePageData(siteId, pageId, tokenToUse, language);
+                        const result = { data: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
                     } catch (err: any) {
@@ -1402,25 +1273,15 @@ export async function POST(req: NextRequest) {
                     continue;
                 }
 
-
                 if (accumulated.name === 'list_jobs') {
                     const hasMcpTool = marketerMCPClient && marketerMCPClient.getAvailableTools().some((t: MarketerMCPTool) => t.name === 'list_jobs');
                     if (hasMcpTool) {
                         // Fall through to MCP generic handler
                     } else {
                         try {
-                            const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                             
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await listJobs(userToken);
+                            const resultData = await listJobs(tokenToUse);
                             const result = { jobs: resultData };
                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1440,18 +1301,9 @@ export async function POST(req: NextRequest) {
                         const language = (args as any).language || 'en';
                         if (!query) throw new Error('Missing query');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await searchAssets(query, userToken, language);
+                        const resultData = await searchAssets(query, tokenToUse, language);
                         const result = { assets: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1467,20 +1319,12 @@ export async function POST(req: NextRequest) {
                     try {
                         const { pageId, newName } = args as any;
                         const language = (args as any).language || 'en';
+
                         if (!pageId || !newName) throw new Error('Missing args');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await duplicatePage(pageId, newName, userToken, language);
+                        const resultData = await duplicatePage(pageId, newName, tokenToUse, language);
                         const result = { success: true, data: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1496,20 +1340,12 @@ export async function POST(req: NextRequest) {
                     try {
                         const { pageId } = args as any;
                         const language = (args as any).language || 'en';
+
                         if (!pageId) throw new Error('Missing pageId');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getPagePreviewUrl(pageId, userToken, language);
+                        const resultData = await getPagePreviewUrl(pageId, tokenToUse, language);
                         const result = { url: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1527,18 +1363,9 @@ export async function POST(req: NextRequest) {
                         const language = (args as any).language || 'en';
                         if (!name || !templateId || !locationId) throw new Error('Missing args');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await createComponentDatasource(name, templateId, locationId, userToken, language);
+                        const resultData = await createComponentDatasource(name, templateId, locationId, tokenToUse, language);
                         const result = { success: true, data: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1556,18 +1383,9 @@ export async function POST(req: NextRequest) {
                         const language = (args as any).language || 'en';
                         if (!pageId || !componentId || !datasourceId) throw new Error('Missing args');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await setComponentDatasource(pageId, componentId, datasourceId, userToken, language);
+                        const resultData = await setComponentDatasource(pageId, componentId, datasourceId, tokenToUse, language);
                         const result = { success: true, data: resultData };
                         emit({ type: 'client_action', action: 'reload_page_canvas' });
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
@@ -1590,18 +1408,9 @@ export async function POST(req: NextRequest) {
                         // For now, rely on Agent passing it (or existing tool signature that matches SDK requirement)
                         let effectiveSiteId = siteId || (applicationContext as any)?.site?.id;
                         
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await listPageChildren(itemId, userToken, language, effectiveSiteId);
+                        const resultData = await listPageChildren(itemId, tokenToUse, language, effectiveSiteId);
                         
                         // Check if SDK returned an error object (instead of throwing)
                         if (resultData && (resultData as any).error && (resultData as any).response) {
@@ -1632,25 +1441,16 @@ export async function POST(req: NextRequest) {
                         // Fall through to MCP generic handler
                     } else {
                         try {
-                            const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                             
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await listSiteTemplates(userToken);
+                            const resultData = await listSiteTemplates(tokenToUse);
                             const result = { templates: resultData };
                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
                             continue;
                         } catch (err: any) {
                             const result = { error: err.message };
-                            toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
                             continue;
                         }
@@ -1664,25 +1464,16 @@ export async function POST(req: NextRequest) {
                         // Fall through to MCP generic handler
                     } else {
                         try {
-                            const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                            const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                             
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await getRenderingHosts(userToken);
+                            const resultData = await getRenderingHosts(tokenToUse);
                             const result = { hosts: resultData };
                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
                             continue;
                         } catch (err: any) {
                             const result = { error: err.message };
-                            toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                             toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                             mcpCalls.push({ tool: accumulated.name, args, result });
                             continue;
                         }
@@ -1695,18 +1486,9 @@ export async function POST(req: NextRequest) {
                         const language = (args as any).language || 'en';
                         if (!pageId) throw new Error('Missing pageId');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await retrievePageVersions(pageId, userToken, language);
+                        const resultData = await retrievePageVersions(pageId, tokenToUse, language);
                         const result = { versions: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1721,18 +1503,9 @@ export async function POST(req: NextRequest) {
                 if (accumulated.name === 'get_condition_templates') {
                     try {
                         const language = (args as any).language || 'en';
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await getConditionTemplates(userToken, language);
+                        const resultData = await getConditionTemplates(tokenToUse, language);
                         const result = { conditions: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
@@ -1753,18 +1526,9 @@ export async function POST(req: NextRequest) {
                       
                       if (!pageId || !componentName || !placeholderName) throw new Error('Missing required arguments.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await addComponentOnPage(pageId, componentName, placeholderName, language, userToken, effectiveSiteName);
+                        const resultData = await addComponentOnPage(pageId, componentName, placeholderName, language, tokenToUse, effectiveSiteName);
                       
                       const result = { success: true, data: resultData };
                       emit({ type: 'client_action', action: 'reload_page_canvas' });
@@ -1779,26 +1543,39 @@ export async function POST(req: NextRequest) {
                 }
 
                 if (accumulated.name === 'create_page') {
+                  
+                  // Try to use MCP tool if available
+                  const mcpToolName = 'create_page';
+                  const hasMcpTool = marketerMCPClient && marketerMCPClient.getAvailableTools().some((t: MarketerMCPTool) => t.name === mcpToolName);
+
+                  if (hasMcpTool) {
+                      try {
+                          const result = await marketerMCPClient!.callTool(mcpToolName, args);
+                          emit({ type: 'client_action', action: 'reload_page_canvas' });
+                          toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                          mcpCalls.push({ tool: accumulated.name, args, result });
+                          continue;
+                      } catch (err: any) {
+                           debugLog(`[create_page] MCP tool failed, falling back to local: ${err.message}`);
+                           // Fallback to local
+                      }
+                  }
+
                   try {
                     let { parentId, templateId, name } = args as any;
                     const language = (args as any).language || 'en';
                     
                     if (!parentId || !name) throw new Error('Missing required arguments: parentId, name.');
 
+                    const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
+
                     // Validate templateId
                     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                     if (!templateId || !uuidRegex.test(templateId)) {
                         console.log(`[create_page] Invalid templateId '${templateId}'. Attempting to find a default template...`);
                         emit({ type: 'status', message: 'Looking for a default page template...' });
-                        
-                        let tokenToUse: string | null = null;
-                        
-                        // Use user token
-                        tokenToUse = (applicationContext as any)?.auth?.accessToken || 
-                                     (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
 
-                        if (tokenToUse) {
-                            try {
+                        try {
                                 const templates = await listSiteTemplates(tokenToUse);
                                 // Handle various response shapes
                                 let templateList: any[] = [];
@@ -1822,9 +1599,8 @@ export async function POST(req: NextRequest) {
                                       emit({ type: 'status', message: `Using template: ${chosen.name}` });
                                   }
                                 }
-                            } catch (err: any) {
+                        } catch (err: any) {
                                 console.warn('[create_page] Failed to list templates:', err.message);
-                            }
                         }
                     }
 
@@ -1832,18 +1608,7 @@ export async function POST(req: NextRequest) {
                         throw new Error(`Invalid or missing templateId: '${templateId}'. Please request 'list_site_templates' first or provide a valid GUID.`);
                     }
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
-                        
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await createPage(parentId, templateId, name, language, userToken);
+                        const resultData = await createPage(parentId, templateId, name, language, tokenToUse);
                     
                     const result = { success: true, data: resultData };
                     emit({ type: 'client_action', action: 'reload_page_canvas' });
@@ -1864,20 +1629,11 @@ export async function POST(req: NextRequest) {
                     
                     if (!parentId || !templateId || !name) throw new Error('Missing required arguments.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
-                        
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await createContentItem({ parentId, templateId, name, language }, userToken);
+                    const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                     
+                    const resultData = await createContentItem({ parentId, templateId, name, language }, tokenToUse);
                     const result = { success: true, data: resultData };
+                    emit({ type: 'client_action', action: 'reload_page_canvas' });
                     toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                     mcpCalls.push({ tool: accumulated.name, args, result });
                   } catch (err: any) {
@@ -1900,18 +1656,9 @@ export async function POST(req: NextRequest) {
                         
                         if (!id || !fields) throw new Error('Missing required arguments.');
 
-                            const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                             (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
-                            
-                            if (!userToken) {
-                                 const referer = req.headers.get('referer') || '';
-                                 const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                                 emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                                 await new Promise(r => setTimeout(r, 100));
-                                 throw new Error('Authentication required.');
-                            }
-                            
-                            const resultData = await updateContent({ id, fields, language }, userToken);
+const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
+                        
+                        const resultData = await updateContent({ id, fields, language }, tokenToUse);
                         
                         const result = { success: true, data: resultData };
                         emit({ type: 'client_action', action: 'reload_page_canvas' });
@@ -1933,18 +1680,9 @@ export async function POST(req: NextRequest) {
                     
                     if (!itemId) throw new Error('Missing required arguments.');
 
-                        const userToken = (applicationContext as any)?.auth?.accessToken || 
-                                         (await prisma.oAuthToken.findUnique({ where: { userId } }))?.accessToken;
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        if (!userToken) {
-                             const referer = req.headers.get('referer') || '';
-                             const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                             emit({ type: 'client_action', action: 'auth_required', data: { url: authUrl } });
-                             await new Promise(r => setTimeout(r, 100));
-                             throw new Error('Authentication required.');
-                        }
-                        
-                        const resultData = await deleteContent(itemId, userToken);
+                        const resultData = await deleteContent(itemId, tokenToUse);
                     
                     const result = { success: true, data: resultData };
                     emit({ type: 'client_action', action: 'reload_page_canvas' });
@@ -2008,49 +1746,11 @@ export async function POST(req: NextRequest) {
                          throw new Error('No site ID provided or found in context.');
                     }
 
-                    // 1. Force User Context (Application Context or DB)
-                    // Service Credentials are skipped for list_pages to ensure correct context/permissions with XMC SDK.
-                   
-                    let userToken: string | null = null;
-                    
-                    // Check Application Context (passed from Frontend)
-                    const contextToken = (applicationContext as any)?.auth?.accessToken;
-                    if (contextToken) {
-                            debugLog('[list_pages] Found access token in Application Context.');
-                            userToken = contextToken;
-                    } 
-                    
-                    // Check Database (User OAuth)
-                    if (!userToken) {
-                        debugLog('[list_pages] Checking User OAuth token in DB...');
-                        const tokenEntry = await prisma.oAuthToken.findUnique({
-                            where: { userId }
-                        });
-                        
-                        if (tokenEntry && tokenEntry.accessToken && tokenEntry.expiresAt >= new Date()) {
-                            userToken = tokenEntry.accessToken;
-                        }
-                    }
+                    const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
 
-                    if (!userToken) {
-                        debugLog(`[list_pages] User Auth required.`);
-                        
-                        const referer = req.headers.get('referer') || '';
-                        const authUrl = `/api/auth/login?userId=${encodeURIComponent(userId)}&redirectUri=${encodeURIComponent(referer)}`;
-                        
-                        emit({ 
-                            type: 'client_action', 
-                            action: 'auth_required',
-                            data: { url: authUrl }
-                        });
-                        
-                        await new Promise(r => setTimeout(r, 100));
-                        throw new Error(`Authentication required. Please log in to access site pages.`);
-                    }
-
-                    // Try with User Token
-                    debugLog('[list_pages] Calling getAllPagesForSite with User Token...');
-                    const pagesResult = await getAllPagesForSite(reqSiteId, language, userToken, process.env.ENVIRONMENT_HOST || '');
+                    // Try with Token
+                    debugLog(`[list_pages] Calling getAllPagesForSite...`);
+                    const pagesResult = await getAllPagesForSite(reqSiteId, language, tokenToUse, process.env.ENVIRONMENT_HOST || '');
                     
                     debugLog(`[list_pages] Success. Found ${Array.isArray(pagesResult) ? pagesResult.length : 0} pages.`);
                     

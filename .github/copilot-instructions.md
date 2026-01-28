@@ -51,8 +51,10 @@ As the developer for this project, you should approach your work with the follow
 - **Achitectural Thinking** - Consider the overall architecture of the application when making changes or adding new features.
 - **Code Quality** - Write clean, maintainable, and well-documented code. You should follow best practices such as DRY (Don't Repeat Yourself) and KISS (Keep It Simple, Stupid).
 - **Stability and Reliability** - The goal is to create an application is stable and reliable. Write code that is robust and can handle edge cases gracefully.
-- **Reuse over Reinvention** - Before implementing a new feature or functionality, check if there are existing libraries or components that can be reused.
+- **Reuse over Reinvention** - Before implementing a new feature or functionality, check if there are existing libraries or components that can be reused. Code reuse should be abstracted to functions for future implementations.
 - **Cause and Effect** - Solutions may not be obvious. Always try to understand the root cause of an issue rather than just addressing the symptoms. You should be able to reason about how different parts of the application interact and how changes in one area may affect others. Additionally, there may be other contextual influences on a problem that may not be directly connected but in a runtime scenario may be causing the issue or state based issues such as changes made during the operation of the application. Other causes may be latent and need to be uncovered through careful analysis.
+- **MCP Priority** - When implementing functionality, always prioritize using Sitecore Marketer MCP tools if they exist for the task. Local implementation should be a fallback.
+- **Smart Token Strategy** - When using the Agent API (`/stream/ai-agent-api`) locally (fallback), you MUST use the `getSmartToken` helper logic: prefer a Service Token (Client Credentials), and fall back gracefully to the User Token (Context/DB).
 
 ## Coding Standards
 
