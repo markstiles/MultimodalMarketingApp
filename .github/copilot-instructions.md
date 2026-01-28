@@ -1,6 +1,6 @@
 # XM Cloud Chatbot
 
-AI-powered chatbot assistant for Sitecore XM Cloud Pages Editor. Provides intelligent content auditing, campaign design, SEO optimization, and component population capabilities.
+AI-powered chatbot assistant for Sitecore XM Cloud Pages Editor. Provides intelligent content auditing, campaign design, SEO optimization, and component population capabilities. By integrating into the Pages Editor, the chatbot offers context-aware assistance, automatic role specialization based on user intent, and the ability to work with Sitecore without requiring deep technical knowledge.
 
 ## Features
 
@@ -100,6 +100,14 @@ Do not force all traffic through a single proxy.
 ### Errors
 
 when attempting to fix errors, writing code that handles single cases like hardcoding responses or trying to create instructions that only work for one specific error is not acceptable. You should always aim to write code that is generic and can handle a variety of cases. This may involve creating utility functions, using polymorphism, or other techniques to make your code more flexible. You also do not want to generate instructions that indicate the chat app should not try to do specific functionality again. Instead, you want to make the code more robust so that it can handle those cases in the future without failing. This entails trying to understand the problem that underlies the error and addressing that root cause rather than just the symptom. 
+
+### Notebook Construction
+When creating or editing a Jupyter Notebook, follow these structural guidelines for better organization and maintainability:
+
+1.  **Imports**: Always place all library references and imports in their own dedicated section at the top of the notebook.
+2.  **Environment Variables**: Consolidate all environment variables and configuration settings into a dedicated "Variables" or "Configuration" section immediately following the imports. This keeps setup clean.
+3.  **Functions**: Define each function in its own separate cell. This allows for individual updates and re-execution of specific logic without rerunning the entire notebook.
+4.  **Experiment Configuration**: Place experiment names and run-specific configurations (like dynamic run names) in the cell where the run is actually initiated (e.g., the `if __main__` block or the final execution cell). This keeps execution parameters close to the action.
 
 ## Sitecore Marketer MCP
 The chatbot uses the Sitecore Marketer MCP API to interact with Sitecore XM Cloud. This should be preferred whenever possible for operations that are supported by the MCP tools. Fall back to direct API calls only when necessary or the MCP does not support the required operation.
