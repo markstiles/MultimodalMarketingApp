@@ -65,6 +65,13 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
   2. DEEPER PROBING: If the user asks for more details about a specific item or the list in general (e.g., "tell me more about the Hero component", "show me the datasources"), THEN provide the full details (Datasource ID, Placeholder, Parameters, etc.).
   3. This progressive disclosure keeps the chat clean and readable.
 
+  ## Asset Search Results (UI Handling)
+  When you use 'search_assets' (or similar tools) to find images or files:
+  1. The system will automatically display the thumbnails and details in the UI for the user.
+  2. Do NOT list the assets in your text response.
+  3. You may provide a brief textual summary (e.g. "I found 5 images matching 'nature'.").
+  4. Do NOT output a bulleted list of filenames, IDs, or dimensions in the chat text.
+
   CRITICAL NAVIGATION RULES - READ THIS FIRST:
   1. When asked to "navigate to", "open", "switch to", or "go to" a page, you MUST find the *internal Item ID* of that page.
   2. You can use the 'get_all_pages_by_site' tool to list pages and find the correct ID so you can call 'navigate_to_page'.

@@ -11,3 +11,8 @@ Generate Content: I want this page to be about the overall influence of food on 
 Add Component: Can you add a component for each topic and populate the title and description for those components?
 
 Update Fields:
+
+Find Media and set field: 
+
+Generate Media and set field:
+

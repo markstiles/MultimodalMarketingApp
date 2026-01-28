@@ -15,6 +15,26 @@ export type ChatAsset = {
   altText?: string;
 };
 
+interface SearchResultItem {
+  itemId?: string;
+  id?: string;
+  item_id?: string;
+  path?: string;
+  name?: string;
+  displayName?: string | null;
+  type?: string | null;
+  url?: string;
+  templateName?: string;
+  innerItem?: {
+    alt?: string;
+    width?: number;
+    height?: number;
+    extension?: string;
+    size?: number;
+    description?: string;
+  };
+}
+
 function addWidthParam(url: string, width: number): string {
   try {
     const u = new URL(url);
@@ -29,9 +49,9 @@ function addWidthParam(url: string, width: number): string {
   }
 }
 
-function isProbablyImageExtension(ext?: string): boolean {
+function isImageExtension(ext?: string): boolean {
   const e = (ext || '').replace(/^\./, '').toLowerCase();
-  return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif'].includes(e);
+  return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico', 'tiff', 'ashx'].includes(e);
 }
 
 function asNumber(value: unknown): number | undefined {
@@ -40,89 +60,42 @@ function asNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function pickString(obj: any, keys: string[]): string | undefined {
-  for (const k of keys) {
-    const v = obj?.[k];
-    if (typeof v === 'string' && v.trim()) return v;
-  }
-  return undefined;
-}
-
-function extractCandidateObjects(root: unknown): any[] {
-  const out: any[] = [];
-
-  const seen = new Set<any>();
-  const queue: any[] = [root];
-
-  while (queue.length) {
-    const cur = queue.shift();
-    if (!cur || typeof cur !== 'object') continue;
-    if (seen.has(cur)) continue;
-    seen.add(cur);
-
-    if (Array.isArray(cur)) {
-      for (const v of cur) queue.push(v);
-      continue;
-    }
-
-    // Heuristics: an asset-ish object has at least a path/url/id-ish field.
-    const hasPath = typeof (cur as any).path === 'string';
-    const hasUrl = typeof (cur as any).url === 'string';
-    const hasId = typeof (cur as any).itemId === 'string' || typeof (cur as any).id === 'string' || typeof (cur as any).item_id === 'string';
-
-    if (hasPath || hasUrl || hasId) {
-      out.push(cur);
-    }
-
-    for (const v of Object.values(cur as any)) {
-      queue.push(v);
-    }
-  }
-
-  return out;
-}
-
 export function extractChatAssetsFromToolResult(args: {
-  result: unknown;
+  results: SearchResultItem[];
   thumbnailWidth?: number;
 }): ChatAsset[] {
   const w = args.thumbnailWidth ?? 100;
 
-  const candidates = extractCandidateObjects(args.result);
   const assets: ChatAsset[] = [];
 
-  for (const c of candidates) {
-    const explicitUrl = pickString(c, ['url', 'assetUrl', 'imageUrl', 'mediaUrl']);
-    const assetId = pickString(c, ['assetId', 'asset_id', 'itemId', 'id', 'item_id']);
-    const path = pickString(c, ['path', 'mediaPath', 'image_path', 'asset_path']);
-    const extension = pickString(c, ['extension', 'ext', 'fileExtension', 'image_extension']);
-
-    const url = buildEdgeAssetUrl({
-      assetId,
-      explicitUrl,
-    });
-
+  for (const result of args.results) {
+    const assetId = result.itemId || result.id || result.item_id;
+    const url = buildEdgeAssetUrl({ assetId });
     if (!url) continue;
 
-    const type = pickString(c, ['type', 'assetType', 'mime_type', 'mimeType']);
+    const path = result.path as string | undefined;
+    const extension = result.innerItem?.extension;
+    const type = result.type as string | undefined;
+    const name = result.displayName || result.name;
+    const isImage = isImageExtension(extension)
 
-    const isImage =
-      (typeof type === 'string' && type.toLowerCase().startsWith('image/')) ||
-      isProbablyImageExtension(extension);
+    // Get dimensions from innerItem (prioritized) or fallback to root properties
+    const width = asNumber(result.innerItem?.width) || asNumber((result as any).width) || asNumber((result as any).Width);
+    const height = asNumber(result.innerItem?.height) || asNumber((result as any).height) || asNumber((result as any).Height);
 
     const asset: ChatAsset = {
       kind: isImage ? 'image' : 'file',
       url,
       thumbUrl: isImage ? addWidthParam(url, w) : undefined,
-      name: pickString(c, ['name', 'title', 'displayName', 'filename', 'fileName']),
+      name,
       itemId: assetId,
       path,
-      extension,
-      size: asNumber(c?.size),
-      description: pickString(c, ['description', 'summary']),
-      width: asNumber(c?.width),
-      height: asNumber(c?.height),
-      altText: pickString(c, ['altText', 'alt_text', 'alt']),
+      extension: extension,
+      size: asNumber(result.innerItem?.size) || asNumber((result as any).size),
+      description: result.innerItem?.description,
+      width,
+      height,
+      altText: result.innerItem?.alt,
     };
 
     assets.push(asset);

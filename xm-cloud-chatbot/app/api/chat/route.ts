@@ -1304,7 +1304,19 @@ const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
                         const resultData = await searchAssets(query, tokenToUse, language);
+                        console.log('[search_assets] resultData:', JSON.stringify(resultData, null, 2));
+
                         const result = { assets: resultData };
+                        
+                        // Extract and emit assets for UI rendering
+                        const extractedAssets = extractChatAssetsFromToolResult({ 
+                            results: resultData,
+                            thumbnailWidth: 300 // Request larger thumbnails for grid display
+                        });
+                        if (extractedAssets.length > 0) {
+                            emit({ type: 'assets', assets: extractedAssets });
+                        }
+
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                         mcpCalls.push({ tool: accumulated.name, args, result });
                     } catch (err: any) {

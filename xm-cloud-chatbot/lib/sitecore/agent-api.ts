@@ -1305,7 +1305,12 @@ export async function searchAssets(query: string, accessToken: string, language:
         const agentBaseUrl = getAgentApiBaseUrl();
         const url = `${agentBaseUrl}/api/v1/assets/search?query=${encodeURIComponent(query)}&language=${language}`;
         const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-        if (!res.ok) throw new Error(`Failed to search assets: ${res.status} ${await res.text()}`);
+        if (!res.ok) {
+            if (res.status === 404) {
+                 return { results: [] };
+            }
+            throw new Error(`Failed to search assets: ${res.status} ${await res.text()}`);
+        }
         return await res.json();
     } catch (error: any) {
         console.error('Failed to search assets:', error);
