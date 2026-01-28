@@ -81,6 +81,14 @@ export default function ChatPanel({
   const abortControllerRef = useRef<AbortController | null>(null);
   const resumingFromAuthRef = useRef(false);
 
+  // Refs to access latest state in event listeners without dependency cycles
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  // We need a ref for sendMessage to call it from existing useEffect safely
+  // but sendMessage is defined below. We'll set this ref in a separate small useEffect
+  // or define sendMessage before the main useEffect (which requires moving the effect down).
+  const sendMessageRef = useRef<((text: string, options?: { appendUserMessage?: boolean }) => Promise<void>) | null>(null);
+
   // Listen for popup auth success messages
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -88,6 +96,16 @@ export default function ChatPanel({
             toast.dismiss(); // dismiss all toasts (including the login prompt)
             toast.success('Authentication successful!');
             resumingFromAuthRef.current = true;
+
+            // Automatically retry the last user message
+            const currentMessages = messagesRef.current || [];
+            const lastUserMessage = [...currentMessages].reverse().find(m => m.role === 'user');
+            
+            if (lastUserMessage && sendMessageRef.current) {
+                console.log('Resuming conversation with last user message:', lastUserMessage.content);
+                // We re-append the message to make it clear a new request is happening
+                sendMessageRef.current(lastUserMessage.content, { appendUserMessage: true });
+            }
         }
     };
     window.addEventListener('message', handleMessage);
@@ -470,6 +488,9 @@ export default function ChatPanel({
     }
   };
 
+  // Update ref to allow calling sendMessage from event listeners
+  sendMessageRef.current = sendMessage;
+
   const handleSendMessage = async () => {
     await sendMessage(input, { appendUserMessage: true });
   };
@@ -536,7 +557,7 @@ export default function ChatPanel({
         {/* Main Chat Panel */}
         <div className="flex-1 flex flex-col">
           {/* Header */}
-          <div className="border-b border-gray-200 p-4 bg-white">
+          <div className="border-b border-gray-200 p-2 bg-white">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2">
                 <button
@@ -548,7 +569,7 @@ export default function ChatPanel({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </button>
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-xs font-semibold text-gray-900">
                   {conversationTitle || 'AI Assistant'}
                 </h2>
               </div>

@@ -1,45 +1,25 @@
-* design
-    * the ui needs to design lists better so they are more prominent (bullets or <li> etc) and headings. code blocks should be the width of the text not full available width
-    * the profile selection seems off. I said 'hello' and it set it to 'component populator' more refinement and testing needed
-    * want to manage the instructions for each profile more easily
-    * structure the code more like: controllers (route handlers), services (business logic), apis (defines api methods and uses clients), clients (external connection), resources (data)
-    * remove unused/duplicate env variables
-    * refactor code down to more manageable structure
-    * list out features
-    * not all of the chat text is displayed (thinking for example) and it often isn't a resilient conversation. an error will stop the response.
-    * tools should be queried from mcp not hardcoded but a list should be maintained as an allow list
-    * move the instructions to content and query from graphql
-    * creating a page needs a template id and parent id but should be a name.
-    * analyze an image from the media library and set the alt text (or folder)
-    * analyze page content and set the metadata fields
-* feeback
-    * less about generating content and more about checking content or setting metadata
-    * how to find an image 
-    * automate scaffolding pages and structure
-* UI
-    * audio interface
-    * polish up the UI to be less web 2.0 
-    * need a cancel button
 * tooling
-    * any type of update function should be approved first by the user. 
-    * after any content update the page should be refreshed
+    * how to find and display an image (thumbnail and modal or new window)
+    * analyze an image from the media library and set the alt text (or folder)
     * when images are generated, they show up and then more binary text continues to be added until something else finishes
-    * the images do not show up after you leave and return to the conversation
-    * do we have a duplicate mcp tool message generator. there's a tools list which should be queried from the mcp server and only have a pass-through allowed tools we can manage
-    * improve performance on responses (what's the bottleneck)
-    * integrate marketing mcp 
-    * create pages from generated content
-    * build app in pages 
-    * start integrating the context that pages provides
-        * Item ID
-        * Site name
-        * Language
-        * Page route
-        * User info
-    * allow audience to try it out
     * users can choose, view or improve images
+    * evaluating content, looking for empty fields, setting metadata or alt tags
+    * allow for tagging which requires looking up templates, field sources and connecting where that is (relative, sxa variable)    * not all of the chat text is displayed (thinking for example) and it often isn't a resilient conversation. an error will stop the response.
+    * automate scaffolding pages and structure possibly from generated content
+    * analyze page content and set the metadata fields
+    * any type of update function should be approved first by the user. 
+    * want to manage the instructions for each profile more easily and partially in content
+    * the profile selection seems off. I said 'hello' and it set it to 'component populator' more refinement and testing needed
     * make models easy to change out
     * convert content to audio (blogcast)
+    * can we make it good at new requests from users. how to handle can you do this for document processing?
+    * list out features
+* UI
+    * polish up the UI to be less web 2.0 
+    * audio interface
+    * need a cancel button to stop long running conversation
+    * needs design for lists so they are more prominent (bullets or <li> etc) and headings. code blocks should be the width of the text not full available width
+    * when i open the conversation manager and delete one item, it closes. after the first it stays open. It should just stay open until i close it.
 * content 
     * is the content good enough on clarity or should we use velir.com 
     * create content in sitecore for site-specific brand voice
@@ -47,7 +27,6 @@
     * instructions for image gen to make very high quality images
     * bulk update media alt text and description
 * testing
-    * add ML Flow to track and automate prompt testing
     * content research
     * building a page
     * create an image then update it 
@@ -63,6 +42,10 @@
     * can we draw in any data to help decision making
 * deploy
     * how/where to deploy on vercel
-    * find a free supabase postgres account to use after deployment to vercel
+    * get free supabase account to deploy to vercel
 * app
      `images.domains` is deprecated in favor of `images.remotePatterns`.
+     * structure the code more like: controllers (route handlers), services (business logic), apis (defines api methods and uses clients), clients (external connection), resources (data)
+    * refactor code down to more manageable structure
+    * remove unused/duplicate env variables
+    

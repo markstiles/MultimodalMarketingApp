@@ -30,13 +30,34 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
   - userId: {{userId}}
   - applicationId: {{applicationId}}
   - environmentHost: {{environmentHost}}
+  - tenantDisplayName: {{tenantDisplayName}}
+  - applicationContext: {{applicationContext}}
 
   Conversations persist across pages within the same site, so you can reference previous discussions even if the user has navigated to a different page. Always check the currentPageId to understand which page the current message relates to.
 
   When the user asks what page they are on, respond with currentPageName and siteName only. Do not include currentPagePath unless explicitly asked, and only mention currentPageId if explicitly asked.
 
+  ## Environment Information
+  Use the 'applicationContext' object to understand the application environment. It has the following structure:
+  application.context 
+    name: application name
+    type: application type which could be public (curated by sitecore and available to all) or custom (built for and restricted to a client)
+    resources:
+      tenantDisplayName: environment name
+    resourceAccess:
+      tenantDisplayName: environment name		
+    extensionPoints
+      meta:
+        title: application name
+        developerName: application creator
+  
+  When asked about the "environment" or "environment name", you should look for 'tenantDisplayName' within the resources or resourceAccess sections of the applicationContext.
+
   ## General Behavior Instructions
-  1. **Do NOT mention authentication.** If you need to authenticate to perform an action (e.g., listing components, creating pages), just do it silently. The system handles token acquisition automatically. If an action fails due to permissions, report a generic "I'm having trouble accessing that resource" error, not specific token details.
+  1. **Authentication Handling**: 
+     - If you have access to tools, do NOT mention authentication details or tokens.
+     - If you are BLOCKED by missing authentication (as indicated in the Critical Authentication Notice above), YOU MUST ask the user to log in using the provided button/popup.
+     - If an action fails due to permissions (and not missing login), report a generic "I'm having trouble accessing that resource" error.
 
   ## Retrieval & Listing Instructions
   When the user asks you to retrieve or list items (such as "what components are on this page", "find pages about X", or "list all sites"):
@@ -445,6 +466,9 @@ export type ContextValues = {
   userId?: string;
   environmentHost?: string;
   applicationId?: string;
+  tenantDisplayName?: string;
+  applicationContext?: any;
+  isMarketerAuthRequired?: boolean;
 };
 
 export function getAssistantConfig(type: AssistantType, context?: ContextValues): AssistantConfig {
@@ -456,14 +480,34 @@ export function getAssistantConfig(type: AssistantType, context?: ContextValues)
 
   if (context) {
     systemPrompt = systemPrompt
-      .replace('{{currentPageId}}', context.currentPageId || 'UNKNOWN')
-      .replace('{{currentPageName}}', context.currentPageName || 'UNKNOWN')
-      .replace('{{currentPagePath}}', context.currentPagePath || 'UNKNOWN')
-      .replace('{{siteId}}', context.siteId || 'UNKNOWN')
-      .replace('{{siteName}}', context.siteName || 'UNKNOWN')
-      .replace('{{userId}}', context.userId || 'UNKNOWN')
-      .replace('{{applicationId}}', context.applicationId || 'UNKNOWN')
-      .replace('{{environmentHost}}', context.environmentHost || process.env.ENVIRONMENT_HOST || 'UNKNOWN');
+      .replace(/{{currentPageId}}/g, context.currentPageId || 'UNKNOWN')
+      .replace(/{{currentPageName}}/g, context.currentPageName || 'UNKNOWN')
+      .replace(/{{currentPagePath}}/g, context.currentPagePath || 'UNKNOWN')
+      .replace(/{{siteId}}/g, context.siteId || 'UNKNOWN')
+      .replace(/{{siteName}}/g, context.siteName || 'UNKNOWN')
+      .replace(/{{userId}}/g, context.userId || 'UNKNOWN')
+      .replace(/{{applicationId}}/g, context.applicationId || 'UNKNOWN')
+      .replace(/{{environmentHost}}/g, context.environmentHost || process.env.ENVIRONMENT_HOST || 'UNKNOWN')
+      .replace(/{{tenantDisplayName}}/g, context.tenantDisplayName || 'UNKNOWN')
+      .replace(/{{applicationContext}}/g, context.applicationContext ? JSON.stringify(context.applicationContext, null, 2) : 'UNKNOWN');
+    
+    if (context.isMarketerAuthRequired) {
+      systemPrompt += `
+      
+      ## CRITICAL AUTHENTICATION NOTICE
+      The user is NOT authenticated with the Marketer MCP system. You currently do NOT have access to tools specifically for:
+      - Creating or managing pages
+      - Managing assets (uploading, updating)
+      - Accessing detailed Sitecore data
+      
+      If the user asks to perform any of these actions, YOU MUST:
+      1. Explicitly prevent the action and state that authentication is required.
+      2. Inform the user they need to click the "Login" or "Connect" button in the interface to proceed.
+      3. Tell them that after they log in, you will be able to resume their request.
+      
+      IGNORE the "Do NOT mention authentication" rule below in this specific case.
+      `;
+    }
   }
 
   return {

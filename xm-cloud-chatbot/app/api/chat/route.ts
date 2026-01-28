@@ -259,10 +259,12 @@ export async function POST(req: NextRequest) {
 
     // Get assistant configuration
     const pagesContextInfo = pagesContext || (conversation.metadata as any)?.pagesContext;
+    const appContextInfo = applicationContext || (conversation.metadata as any)?.applicationContext;
     const siteName = pagesContextInfo?.siteInfo?.name;
     const currentPageName =
       pagesContextInfo?.pageInfo?.displayName || pagesContextInfo?.pageInfo?.name;
     const currentPagePath = pagesContextInfo?.pageInfo?.path;
+    const tenantDisplayName = appContextInfo?.tenantDisplayName;
 
     const assistantConfig = getAssistantConfig(
       conversation.assistantType as AssistantType,
@@ -274,7 +276,10 @@ export async function POST(req: NextRequest) {
         siteName,
         userId,
         applicationId,
-        environmentHost: process.env.ENVIRONMENT_HOST
+        environmentHost: process.env.ENVIRONMENT_HOST,
+        tenantDisplayName,
+        applicationContext: appContextInfo,
+        isMarketerAuthRequired: authStatus.requiresAuth
       }
     );
 
