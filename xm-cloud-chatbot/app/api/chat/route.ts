@@ -1146,7 +1146,7 @@ const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
 
                         const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
                         
-                        const resultData = await getComponent(componentName, pageId, tokenToUse);
+                        const resultData = await getComponent(componentName, tokenToUse, siteName, pageId);
                         
                         const result = { component: resultData };
                         toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });

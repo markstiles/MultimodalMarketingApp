@@ -1,4 +1,5 @@
 * tooling
+    * check if page exists before creating it
     * how to find and display an image (thumbnail and modal or new window)
     * analyze an image from the media library and set the alt text (or folder)
     * when images are generated, they show up and then more binary text continues to be added until something else finishes
