@@ -32,6 +32,7 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
   - environmentHost: {{environmentHost}}
   - tenantDisplayName: {{tenantDisplayName}}
   - applicationContext: {{applicationContext}}
+  - pagesContext: {{pagesContext}}
 
   Conversations persist across pages within the same site, so you can reference previous discussions even if the user has navigated to a different page. Always check the currentPageId to understand which page the current message relates to.
 
@@ -96,6 +97,13 @@ const PAGE_CONTEXT_INSTRUCTIONS = `
      - **Avoid Guessing**: Never call 'get_component' or 'add_component_on_page' with a raw name like "Promo". Always look it up first.
      
   5. **Component Fields**: Before "updating fields", call 'get_component' (with the resolved ID) to check the schema.
+
+  ## Page Fields & Template Instructions
+  When the user asks what fields are on a page (e.g., "what fields does this page have?", "show me the page data"):
+  1. Check your **pagesContext** (specifically 'pageInfo.templateId') for the current page's template ID.
+  2. If 'templateId' is found, call 'get_page_template_by_id' with it to get the field definitions.
+  3. If not found in context, call 'get_page' with the 'currentPageId' to find it, then call 'get_page_template_by_id'.
+  4. Do not assume you know the fields; always look them up via the template.
   `;
 
 const IMAGE_GENERATION_INSTRUCTIONS = `
@@ -475,6 +483,7 @@ export type ContextValues = {
   applicationId?: string;
   tenantDisplayName?: string;
   applicationContext?: any;
+  pagesContext?: any;
   isMarketerAuthRequired?: boolean;
 };
 
@@ -496,7 +505,8 @@ export function getAssistantConfig(type: AssistantType, context?: ContextValues)
       .replace(/{{applicationId}}/g, context.applicationId || 'UNKNOWN')
       .replace(/{{environmentHost}}/g, context.environmentHost || process.env.ENVIRONMENT_HOST || 'UNKNOWN')
       .replace(/{{tenantDisplayName}}/g, context.tenantDisplayName || 'UNKNOWN')
-      .replace(/{{applicationContext}}/g, context.applicationContext ? JSON.stringify(context.applicationContext, null, 2) : 'UNKNOWN');
+      .replace(/{{applicationContext}}/g, context.applicationContext ? JSON.stringify(context.applicationContext, null, 2) : 'UNKNOWN')
+      .replace(/{{pagesContext}}/g, context.pagesContext ? JSON.stringify(context.pagesContext, null, 2) : 'UNKNOWN');
     
     if (context.isMarketerAuthRequired) {
       systemPrompt += `

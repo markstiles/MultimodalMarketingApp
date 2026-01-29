@@ -41,7 +41,8 @@ import {
   listSiteTemplates,
   getRenderingHosts,
   retrievePageVersions,
-  getConditionTemplates
+  getConditionTemplates,
+  getPageTemplateById
 } from '@/lib/sitecore/agent-api';
 import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/utils/db-errors';
 import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
@@ -1046,6 +1047,27 @@ export async function POST(req: NextRequest) {
                         const resultData = await getPagePathByUrl(url, tokenToUse);
                     
                     const result = resultData;
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  } catch (err: any) {
+                    const result = { error: err.message };
+                    toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
+                    mcpCalls.push({ tool: accumulated.name, args, result });
+                  }
+                  continue;
+                }
+
+                if (accumulated.name === 'get_page_template_by_id') {
+                  try {
+                    const reqTemplateId = (args as any).templateId;
+                    const language = (args as any).language || 'en';
+                    if (!reqTemplateId) throw new Error('No template ID provided.');
+
+                        const tokenToUse = await getSmartToken(userId, req, emit, applicationContext);
+                        
+                        const resultData = await getPageTemplateById(reqTemplateId, tokenToUse, language);
+                    
+                    const result = { template: resultData };
                     toolResults.push({ role: 'tool', tool_call_id: accumulated.id, content: JSON.stringify(result) });
                     mcpCalls.push({ tool: accumulated.name, args, result });
                   } catch (err: any) {

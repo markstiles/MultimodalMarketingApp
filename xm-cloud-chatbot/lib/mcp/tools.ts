@@ -657,6 +657,22 @@ export const GET_CONDITION_TEMPLATES_TOOL = {
     }
 };
 
+export const GET_PAGE_TEMPLATE_BY_ID_TOOL = {
+    type: 'function' as const,
+    function: {
+        name: 'get_page_template_by_id',
+        description: 'Get details about a page template including available fields.',
+        parameters: {
+            type: 'object',
+            properties: {
+                templateId: { type: 'string', description: 'The ID of the template.' },
+                language: { type: 'string', description: 'Language code (default: en).' }
+            },
+            required: ['templateId']
+        }
+    }
+};
+
 export function getAllTools() {
   return [
     IMAGE_GENERATION_TOOL,
@@ -665,6 +681,7 @@ export function getAllTools() {
     GET_PAGE_COMPONENTS_TOOL,
     GET_ALLOWED_COMPONENTS_TOOL,
     GET_PAGE_TOOL,
+    GET_PAGE_TEMPLATE_BY_ID_TOOL,
     GET_PAGE_HTML_TOOL,
     GET_PATH_BY_URL_TOOL,
     LIST_COMPONENTS_TOOL,

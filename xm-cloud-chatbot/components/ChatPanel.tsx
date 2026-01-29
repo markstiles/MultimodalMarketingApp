@@ -80,6 +80,7 @@ export default function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const resumingFromAuthRef = useRef(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true); // Default to true to prevent flashing
 
   // Refs to access latest state in event listeners without dependency cycles
   const messagesRef = useRef(messages);
@@ -149,6 +150,7 @@ export default function ChatPanel({
     // Otherwise, keep the draft text so the user can send again after login.
     (async () => {
       const status = await checkAuthStatus(userId);
+      setIsAuthenticated(status.authenticated);
       if (status.authenticated) {
         resumingFromAuthRef.current = true;
         await sendMessage(pending, { appendUserMessage: false });
@@ -157,6 +159,19 @@ export default function ChatPanel({
       }
     })();
   }, [user?.id, pagesContext?.siteInfo?.id]);
+
+  // Initial Auth Check
+  useEffect(() => {
+    if (user?.id) {
+       checkAuthStatus(user.id).then(status => setIsAuthenticated(status.authenticated));
+    }
+  }, [user?.id]);
+  
+  const handleLogin = () => {
+      if (!user?.id) return;
+      const loginUrl = `/api/auth/login?userId=${encodeURIComponent(user.id)}&redirectUri=${encodeURIComponent(window.location.href)}`;
+      window.location.href = loginUrl;
+  };
 
   const sendMessage = async (
     messageText: string,
@@ -569,19 +584,40 @@ export default function ChatPanel({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </button>
-                <h2 className="text-xs font-semibold text-gray-900">
-                  {conversationTitle || 'AI Assistant'}
-                </h2>
+                <div className="flex flex-col">
+                   <h2 className="text-xs font-semibold text-gray-900">
+                    {conversationTitle || 'AI Assistant'}
+                   </h2>
+                   {!isAuthenticated && (
+                       <button 
+                           onClick={handleLogin} 
+                           className="text-[10px] text-blue-600 hover:text-blue-800 underline text-left"
+                       >
+                           Connect Sitecore
+                       </button>
+                   )}
+                </div>
               </div>
-              <button
-                onClick={startNewConversation}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                title="New Conversation"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-1">
+                  {!isAuthenticated && (
+                     <button
+                        onClick={handleLogin}
+                        className="p-1 px-2 bg-blue-50 text-blue-600 text-xs rounded hover:bg-blue-100 transition-colors mr-2 border border-blue-200"
+                        title="Connect to Marketer MCP"
+                     >
+                       Connect
+                     </button>
+                  )}
+                  <button
+                    onClick={startNewConversation}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    title="New Conversation"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+              </div>
             </div>
             <AssistantBadge type={assistantType} />
           </div>
