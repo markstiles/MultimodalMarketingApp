@@ -1,3 +1,6 @@
+* references
+    * https://velir.atlassian.net/wiki/spaces/Sitecore/pages/5268144155/Marketplace+App+Ideas
+	* https://velir.atlassian.net/wiki/spaces/Sitecore/pages/5261262884/Sitecore+Marketplace
 * tooling
     * word doc processing (extract and mine)
     * site specific instructions for paths would help find things like authors and lookups

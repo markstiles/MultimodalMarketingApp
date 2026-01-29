@@ -21,13 +21,16 @@ The application has a variety of capabilities to assist users in their tasks:
 - **Intent Re-classification** - Automatically switches assistants mid-conversation
 - **Persistent Conversations** - Stores conversation history by user and site that can be managed
 - **Image Generation** - Generates images based on user prompts using OpenAI's image generation capabilities
+- **Document Analysis** - Allows users to upload `.docx`, `.pdf`, `.txt`, and `.md` files. The system extracts the content (XML-to-HTML for docx, text extraction for others), and injects it into the context for the AI to analyze. The UI collapses this large content by default using `<details>` tags.
 
 ## Tech Stack
 
 - **Operating System**: This is being developed in a Windows environment
 - **Command Line Acces**: When you need to run commands on the command line, use PowerShell or Windows Terminal. For example, grep or grep_search is not available, so use Select-String instead.
+- **Directory Scope (CRITICAL)**: This is a nested project. The root folder `MultimodalMarketingDemo` is just a container. The actual Next.js application lives in `xm-cloud-chatbot`. ALL npm commands (install, run, build) MUST be run from inside `xm-cloud-chatbot`. Running `npm install` in the root will create a phantom `package.json` that breaks module resolution (e.g. `Can't resolve 'tailwindcss'`). Always check `Get-Location` before installing.
 - **Frontend**: The application being developed is a Next.js 15 (with App Router), written in React, TypeScript, Tailwind CSS
-- **Backend**: This application uses Next.js API Routes
+- **Backend**: This application uses Next.js API Routes. It uses `adm-zip` and `fast-xml-parser` for handling .docx file uploads server-side.
+- **Components**: The Chat UI uses `rehype-raw` to safely render specific HTML tags (like `<details>`) inside markdown.
 - **Database**: There is a PostgreSQL database using a Prisma ORM to store conversation history and analytics data
 - **Deployment**: This application is targeting a Vercel (Next.js app) environment and will host the database with Supabase PostgreSQL
 

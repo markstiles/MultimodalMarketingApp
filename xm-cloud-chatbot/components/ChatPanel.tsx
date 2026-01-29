@@ -81,6 +81,8 @@ export default function ChatPanel({
   const abortControllerRef = useRef<AbortController | null>(null);
   const resumingFromAuthRef = useRef(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true); // Default to true to prevent flashing
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Refs to access latest state in event listeners without dependency cycles
   const messagesRef = useRef(messages);
@@ -506,6 +508,57 @@ export default function ChatPanel({
   // Update ref to allow calling sendMessage from event listeners
   sendMessageRef.current = sendMessage;
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedExtensions = ['.docx', '.pdf', '.txt', '.md'];
+    const extension = '.' + file.name.split('.').pop()?.toLowerCase();
+
+    if (!allowedExtensions.includes(extension)) {
+      toast.error('Supported formats: .docx, .pdf, .txt, .md');
+      return;
+    }
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch('/api/upload/parse-document', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Upload failed');
+
+      const data = await response.json();
+      
+      const messageContent = `I have uploaded a document named "${file.name}". Here is the content:
+
+<details>
+<summary>Click to expand document content</summary>
+
+<span style="font-size: 0.8em">
+
+${data.html}
+
+</span>
+</details>
+
+Please analyze this content for meaning, structure, and convert it to HTML for component population. Also generate potential titles, metadata, and a summary.`;
+      
+      await sendMessage(messageContent, { appendUserMessage: true });
+      
+    } catch (error) {
+      toast.error('Failed to upload document');
+      console.error(error);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const handleSendMessage = async () => {
     await sendMessage(input, { appendUserMessage: true });
   };
@@ -646,6 +699,23 @@ export default function ChatPanel({
           {/* Input */}
           <div className="border-t border-gray-200 p-4 bg-white">
             <div className="flex space-x-2">
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept=".docx,.pdf,.txt,.md" 
+                onChange={handleFileUpload} 
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || isUploading}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50 flex items-center justify-center shrink-0"
+                title="Attach Document (DOCX, PDF, TXT, MD)"
+              >
+               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                 <path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
+               </svg>
+              </button>
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}

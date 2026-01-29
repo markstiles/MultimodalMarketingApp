@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -43,7 +44,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`${isUser ? 'max-w-[80%]' : 'w-full'} rounded-lg p-3 ${
+        className={`${isUser ? 'max-w-[80%]' : 'w-full'} min-w-0 rounded-lg p-3 ${
           isUser
             ? 'bg-[#dddddd] text-black border border-gray-300'
             : 'bg-white text-gray-900 border border-gray-200'
@@ -51,21 +52,51 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       >
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw]}
           className="prose prose-sm max-w-none text-current prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1"
           components={{
+            pre: ({ children }) => (
+              <details className="my-2 border border-gray-200 rounded-md bg-gray-50 overflow-hidden group max-w-full">
+                <summary className="px-3 py-2 bg-gray-100 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-200 transition-colors list-none flex items-center justify-between select-none">
+                  <span>Code Snippet</span>
+                  <svg className="w-4 h-4 transform group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </summary>
+                <div className="grid">
+                  <div className="p-3 overflow-x-auto bg-white w-full min-w-0">
+                    <pre className="!m-0 !p-0 !bg-transparent text-sm font-mono whitespace-pre">
+                      {children}
+                    </pre>
+                  </div>
+                </div>
+              </details>
+            ),
             code: ({ node, inline, className, children, ...props }: {
               node?: unknown;
               inline?: boolean;
               className?: string;
               children?: React.ReactNode;
-            }) => (
-              <code
-                className={`${className || ''} ${inline ? '' : 'block p-2 bg-gray-100 rounded-md text-gray-800'}`}
-                {...props}
-              >
-                {children}
-              </code>
-            ),
+            }) => {
+                if (inline) {
+                   return (
+                    <code
+                      className={`${className || ''} px-1.5 py-0.5 bg-gray-100 text-red-500 rounded font-mono text-sm border border-gray-200`}
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                   );
+                }
+                return (
+                  <code
+                    className={`${className || ''} block text-gray-800 font-mono text-sm`}
+                    {...props}
+                  >
+                    {children}
+                  </code>
+                );
+            },
             img: () => null,
           }}
         >
