@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { prisma } from '@/lib/db';
+import { corsHeaders, handleOptions } from '@/lib/cors';
 import { getMarketerMCPClient, checkMarketerMCPAuth, MarketerMCPTool } from '@/lib/mcp/marketer-client';
 import { getAllTools, CLIENT_CONTEXT_TOOLS, CLIENT_ACTION_TOOLS, IMAGE_GENERATION_TOOL, ASSET_URL_TOOL } from '@/lib/mcp/tools';
 import { getAssistantConfig, ContextValues } from '@/lib/prompts';
@@ -48,6 +49,12 @@ import { getDatabaseUnavailableHint, isDatabaseUnavailableError } from '@/lib/ut
 import { buildEdgeAssetUrl } from '@/lib/utils/edge-asset-url';
 import { extractChatAssetsFromToolResult } from '@/lib/utils/chat-assets';
 import { getSmartToken } from '@/lib/utils/server-auth-helpers';
+
+export async function OPTIONS(req: NextRequest) {
+  const origin = req.headers.get('origin');
+  console.log('[Chat API] Handling OPTIONS request. Origin:', origin);
+  return handleOptions(req);
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,

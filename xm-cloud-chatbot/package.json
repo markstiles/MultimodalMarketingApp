@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently \"next dev\" \"local-ssl-proxy --source 3001 --target 3000 --cert solr-ssl.crt --key solr-ssl.key\"",
+    "dev:http": "next dev",
     "build": "next build",
     "start": "next start",
     "db:generate": "prisma generate",
@@ -39,7 +40,9 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
+    "concurrently": "^9.2.1",
     "dotenv": "^17.2.3",
+    "local-ssl-proxy": "^2.0.5",
     "prisma": "^6.19.1",
     "tailwindcss": "^4",
     "typescript": "^5"

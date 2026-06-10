@@ -3,6 +3,7 @@
 	* https://velir.atlassian.net/wiki/spaces/Sitecore/pages/5261262884/Sitecore+Marketplace
 * tooling
     * word doc processing (extract and mine)
+		* specifically needs images extracted, thumbnails shown to the user and then upload the ones they select to media library (or select all)
     * site specific instructions for paths would help find things like authors and lookups
     * check if page exists before creating it
     * how to find and display an image (thumbnail and modal or new window)

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getOrCreateOAuthClient } from '@/lib/mcp/oauth-client';
+import { corsHeaders, handleOptions } from '@/lib/cors';
+
+export async function OPTIONS(req: NextRequest) {
+  return handleOptions(req);
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);

@@ -8,7 +8,7 @@ import MessageBubble from '@/components/MessageBubble';
 import AssistantBadge from '@/components/AssistantBadge';
 import ConversationHistory from '@/components/ConversationHistory';
 import toast, { Toaster } from 'react-hot-toast';
-import { checkAuthStatus } from '@/lib/utils/auth-helpers';
+import { checkAuthStatus, redirectToLogin } from '@/lib/utils/auth-helpers';
 import { clearChatRecovery, loadChatRecovery, saveChatRecovery } from '@/lib/utils/chat-recovery';
 import type { ApplicationContext, PagesContext, UserInfo } from '@sitecore-marketplace-sdk/client';
 
@@ -92,28 +92,35 @@ export default function ChatPanel({
   // or define sendMessage before the main useEffect (which requires moving the effect down).
   const sendMessageRef = useRef<((text: string, options?: { appendUserMessage?: boolean }) => Promise<void>) | null>(null);
 
-  // Listen for popup auth success messages
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-        if (event.data?.type === 'AUTH_SUCCESS') {
-            toast.dismiss(); // dismiss all toasts (including the login prompt)
-            toast.success('Authentication successful!');
-            resumingFromAuthRef.current = true;
+    // Listen for popup auth success messages
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            if (event.data?.type === 'AUTH_SUCCESS') {
+                console.log('Received auth success message', event.data);
+                toast.dismiss(); // dismiss all toasts (including the login prompt)
+                toast.success('Authentication successful!');
+                setIsAuthenticated(true); // Manually set authenticated state true immediately
+                
+                resumingFromAuthRef.current = true;
 
-            // Automatically retry the last user message
-            const currentMessages = messagesRef.current || [];
-            const lastUserMessage = [...currentMessages].reverse().find(m => m.role === 'user');
-            
-            if (lastUserMessage && sendMessageRef.current) {
-                console.log('Resuming conversation with last user message:', lastUserMessage.content);
-                // We re-append the message to make it clear a new request is happening
-                sendMessageRef.current(lastUserMessage.content, { appendUserMessage: true });
+                // Automatically retry the last user message
+                const currentMessages = messagesRef.current || [];
+                const lastUserMessage = [...currentMessages].reverse().find(m => m.role === 'user');
+                
+                if (lastUserMessage && sendMessageRef.current) {
+                    // Slight delay to ensure state updates propagate
+                    setTimeout(() => {
+                        console.log('Resuming conversation with last user message:', lastUserMessage?.content);
+                        if (lastUserMessage && sendMessageRef.current) {
+                             sendMessageRef.current(lastUserMessage.content, { appendUserMessage: true });
+                        }
+                    }, 500);
+                }
             }
-        }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -170,9 +177,10 @@ export default function ChatPanel({
   }, [user?.id]);
   
   const handleLogin = () => {
-      if (!user?.id) return;
-      const loginUrl = `/api/auth/login?userId=${encodeURIComponent(user.id)}&redirectUri=${encodeURIComponent(window.location.href)}`;
-      window.location.href = loginUrl;
+    if (!user?.id) return;
+    
+    // Pass strictly the current origin as redirectUri (purely for state tracking, not actual redirection)
+    redirectToLogin(user.id, window.location.href);
   };
 
   const sendMessage = async (
