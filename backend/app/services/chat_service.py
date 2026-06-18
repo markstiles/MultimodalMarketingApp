@@ -70,6 +70,16 @@ async def stream_chat(
 
         # Build message list for LangGraph
         system_prompt = load_instructions(task_name)
+        ctx = request.context
+        user_lines = []
+        if ctx.user_name:
+            user_lines.append(f"You are helping **{ctx.user_name}**")
+            if ctx.user_email:
+                user_lines.append(f"({ctx.user_email})")
+            user_lines.append(f"on site `{ctx.site_id}`, page `{ctx.page_id}`, language `{ctx.language}`.")
+        else:
+            user_lines.append(f"Current context: site `{ctx.site_id}`, page `{ctx.page_id}`, language `{ctx.language}`.")
+        system_prompt += "\n\n## Session Context\n\n" + " ".join(user_lines)
         lc_messages = [SystemMessage(content=system_prompt)]
 
         # Truncate history if too long
@@ -82,8 +92,20 @@ async def stream_chat(
                 lc_messages.append(AIMessage(content=msg.content))
         lc_messages.append(HumanMessage(content=request.message))
 
+        # Tools that mutate Sitecore content — trigger a canvas reload when they complete
+        _WRITE_TOOLS = frozenset({
+            "create_page", "add_language_to_page", "add_component_on_page",
+            "set_component_datasource", "create_component_ds",
+            "create_content_item", "update_fields_on_item", "update_content",
+            "delete_content", "update_asset", "create_perso_version",
+            "create_perso_version_multi", "update_perso_version",
+            "create_component_ab_test", "update_ab_test", "set_component_variant",
+            "create_brief_from_draft", "update_brief_from_revision",
+        })
+
         # Stream from LangGraph — 30 s timeout per event to detect hung tool calls
         full_response = ""
+        write_occurred = False
         try:
             gen = get_chat_graph().astream_events(
                 {"messages": lc_messages}, version="v2"
@@ -107,11 +129,17 @@ async def stream_chat(
                 elif evt == "on_tool_start":
                     yield _event({"type": "tool_start", "tool": event.get("name", "")})
                 elif evt == "on_tool_end":
-                    yield _event({"type": "tool_end", "tool": event.get("name", "")})
+                    tool_name = event.get("name", "")
+                    yield _event({"type": "tool_end", "tool": tool_name})
+                    if tool_name in _WRITE_TOOLS:
+                        write_occurred = True
         except Exception as exc:
             code = _map_error(exc)
             yield _event({"type": "error", "code": code})
             return
+
+        if write_occurred:
+            yield _event({"type": "canvas_reload"})
 
         # Persist assistant message
         await append_message(db, conversation_id, MessageRole.assistant, full_response)

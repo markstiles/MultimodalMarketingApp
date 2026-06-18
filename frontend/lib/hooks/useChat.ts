@@ -17,10 +17,18 @@ function pickupUrlConversationId(): string | null {
   return id;
 }
 
+const WELCOME_MESSAGE: Message = {
+  id: "welcome",
+  role: "assistant",
+  content:
+    "Hi! I'm your Sitecore marketing assistant. I can help you write and edit page content, audit components, plan campaigns, and work with your media library — all without leaving the editor.\n\nWhat would you like to work on?",
+};
+
 export function useChat(initialConversationId?: string | null) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [streaming, setStreaming] = useState<string>("");
   const [toolActivity, setToolActivity] = useState<string | null>(null);
+  const [canvasReload, setCanvasReload] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(
@@ -100,6 +108,8 @@ export function useChat(initialConversationId?: string | null) {
               setToolActivity(event.tool);
             } else if (event.type === "tool_end") {
               setToolActivity(null);
+            } else if (event.type === "canvas_reload") {
+              setCanvasReload((n) => n + 1);
             } else if (event.type === "done") {
               setMessages((prev) => [
                 ...prev,
@@ -135,5 +145,5 @@ export function useChat(initialConversationId?: string | null) {
     setError(null);
   }, []);
 
-  return { messages, streaming, toolActivity, loading, error, conversationId, send, retry };
+  return { messages, streaming, toolActivity, canvasReload, loading, error, conversationId, send, retry };
 }

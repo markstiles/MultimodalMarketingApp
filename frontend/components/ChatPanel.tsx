@@ -1,13 +1,19 @@
 "use client";
 
+import { useEffect } from "react";
 import { useChat } from "@/lib/hooks/useChat";
 import { useSitecoreContext } from "@/lib/hooks/useSitecoreContext";
 import { ChatInput } from "./ChatInput";
 import { MessageList } from "./MessageList";
 
 export function ChatPanel() {
-  const { context, loading: contextLoading } = useSitecoreContext();
-  const { messages, streaming, toolActivity, loading, error, send, retry } = useChat();
+  const { context, loading: contextLoading, reloadCanvas } = useSitecoreContext();
+  const { messages, streaming, toolActivity, canvasReload, loading, error, send, retry } = useChat();
+
+  // Reload the Sitecore Pages canvas whenever a write tool completes
+  useEffect(() => {
+    if (canvasReload > 0) reloadCanvas();
+  }, [canvasReload, reloadCanvas]);
 
   function handleSend(text: string) {
     if (!context) return;
@@ -16,7 +22,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full bg-white" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-<MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} />
+      <MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} />
 
       {error && (
         <div

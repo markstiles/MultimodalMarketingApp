@@ -17,6 +17,8 @@ class RuntimeContext(_CamelModel):
     page_id: str
     site_id: str
     language: str
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
 
 
 class ChatRequest(_CamelModel):

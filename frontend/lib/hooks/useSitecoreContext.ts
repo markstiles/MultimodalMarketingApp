@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RuntimeContext } from "@/lib/types";
 
 const RUNTIME_CONTEXT = process.env.NEXT_PUBLIC_RUNTIME_CONTEXT ?? "iframe";
@@ -13,14 +13,16 @@ function localContext(): RuntimeContext {
   };
 }
 
-function toRuntimeContext(ctx: {
-  siteInfo?: { id?: string; language?: string };
-  pageInfo?: { id?: string };
-}): RuntimeContext {
+function toRuntimeContext(
+  ctx: { siteInfo?: { id?: string; language?: string }; pageInfo?: { id?: string } },
+  user?: { name?: string; email?: string } | null
+): RuntimeContext {
   return {
     pageId: ctx.pageInfo?.id ?? "",
     siteId: ctx.siteInfo?.id ?? "",
     language: ctx.siteInfo?.language ?? "en",
+    userName: user?.name ?? undefined,
+    userEmail: user?.email ?? undefined,
   };
 }
 
@@ -29,11 +31,11 @@ export function useSitecoreContext() {
     RUNTIME_CONTEXT === "local" ? localContext() : null
   );
   const [loading, setLoading] = useState(RUNTIME_CONTEXT !== "local");
+  const clientRef = useRef<any>(null);
 
   useEffect(() => {
     if (RUNTIME_CONTEXT === "local") return;
 
-    // iframe mode — lazy import keeps SDK out of the server bundle
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
 
@@ -41,28 +43,31 @@ export function useSitecoreContext() {
       .then(async ({ ClientSDK }) => {
         if (cancelled) return;
 
-        // Handshake with the Sitecore Pages parent frame via postMessage.
-        // origin is inferred from document.referrer; no explicit value needed.
-        const client = await ClientSDK.init({
-          target: window.parent,
-          timeout: 10_000,
-        });
-
+        const client = await ClientSDK.init({ target: window.parent, timeout: 10_000 });
         if (cancelled) return;
+        clientRef.current = client;
+
+        // Fetch user info once (no subscription support)
+        let user: { name?: string; email?: string } | null = null;
+        try {
+          const userResult = await client.query("host.user");
+          if (userResult.data) user = userResult.data;
+        } catch {
+          // non-fatal — user info is optional context
+        }
 
         const result = await client.query("pages.context", {
           subscribe: true,
           onSuccess: (ctx) => {
             if (!cancelled) {
-              setContext(toRuntimeContext(ctx));
+              setContext(toRuntimeContext(ctx, user));
               setLoading(false);
             }
           },
         });
 
-        // Seed with the initial value returned by the query
         if (result.data && !cancelled) {
-          setContext(toRuntimeContext(result.data));
+          setContext(toRuntimeContext(result.data, user));
           setLoading(false);
         }
 
@@ -78,5 +83,9 @@ export function useSitecoreContext() {
     };
   }, []);
 
-  return { context, loading };
+  const reloadCanvas = useCallback(() => {
+    clientRef.current?.mutate("pages.reloadCanvas");
+  }, []);
+
+  return { context, loading, reloadCanvas };
 }
