@@ -1,0 +1,52 @@
+# ── Planning & AI tooling ──────────────────────────────────────────────────────
+.specify/
+specs/
+.claude/
+CLAUDE.md
+memory/
+
+# ── Local development only ─────────────────────────────────────────────────────
+docker/
+mlruns/
+mlflow.db
+
+# ── Editor & IDE ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Environment files (secrets never deployed via filesystem) ──────────────────
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+# ── Python build artifacts ─────────────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Node build artifacts ───────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+.next/cache/
+.turbo/
+
+# ── Test output ────────────────────────────────────────────────────────────────
+coverage/
+test-results/
+
+# ── OS ─────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

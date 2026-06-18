@@ -1,174 +1,101 @@
-# Docker Supabase Postgres Setup
+# Docker Infrastructure
 
-This folder contains the Docker configuration for running Supabase Postgres locally for development.
+This folder contains the Docker configuration for the local development infrastructure: PostgreSQL (Supabase-flavored) and the MLflow tracking server.
 
-## Features
+**This folder integrates with `just dev` at the project root.** You do not need to run `docker compose` directly for normal development — use `just dev` to start the full stack, `just stop` to stop containers, and `just logs` to stream Docker infra logs.
 
-- Supabase Postgres 15 image with common extensions
-- Persistent data storage
-- Automatic restart on failure
+## Prerequisites
 
-## Initial Setup
+- [Docker Desktop](https://www.docker.com/products/docker-desktop) (Windows/Mac/Linux)
+- [`just`](https://github.com/casey/just) task runner (`winget install just` on Windows; `brew install just` on macOS)
 
-### 1. Install Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop) (Windows/Mac)
-- OpenSSL (for generating SSL certificates)
-  - Windows: Install Git for Windows (includes OpenSSL) or download from [slproweb.com](https://slproweb.com/products/Win32OpenSSL.html)
-  - Mac: `brew install openssl`
-  - Linux: Usually pre-installed
-
-### 2. Configure Secrets
-
-The default secrets are already created, but you should change them:
-
-```bash
-# Edit these files:
-secrets/pg_user.txt     # PostgreSQL username (default: postgres)
-secrets/pg_pw.txt       # PostgreSQL password (change this!)
-```
-
-### 3. Start Supabase Postgres
-
-```bash
-cd docker
-docker-compose up -d
-```
-
-Verify it's running:
-
-```bash
-docker-compose ps
-docker-compose logs -f postgres
-```
-
-### 4. Update Application Environment
-
-Update your `.env.local` in the project root:
-
-```env
-# Local Docker Supabase Postgres
-POSTGRES_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
-POSTGRES_PRISMA_URL="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public&pgbouncer=true"
-POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres_dev_password_change_me@localhost:5432/postgres?schema=public"
-```
-
-Note: Replace `postgres_dev_password_change_me` with the password you set in `secrets/pg_pw.txt`
-
-### 5. Run Database Migrations
+## Quick Start (Recommended)
 
 From the project root:
 
 ```bash
-npm run db:setup
+# Copy and fill in secrets
+cp .env.example .env         # root app config — fill in LLM_API_KEY
+cp docker/.env.example docker/.env  # Docker credentials — defaults work for local dev
+
+# Start the full stack (runs preflight, Docker, migrations, and app processes)
+just dev
 ```
 
-## Daily Usage
+## Manual Docker Usage
 
-### Start Database
+If you need to manage Docker containers directly (outside `just dev`):
 
 ```bash
-cd docker
-docker-compose up -d
+# Start containers
+docker compose -f docker/docker-compose.yml up -d
+
+# Stop containers
+docker compose -f docker/docker-compose.yml stop
+
+# Stream logs
+docker compose -f docker/docker-compose.yml logs -f
+
+# Connect to PostgreSQL
+docker exec -it postgres psql -U postgres -d marketing_app
 ```
 
-### Stop Database
+## Services
 
-```bash
-docker-compose down
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| postgres | `supabase/postgres:17.6.1.067` | 5432 | PostgreSQL with extensions (PostGIS, pgvector, etc.) |
+| mlflow | `ghcr.io/mlflow/mlflow:v2.19.0` | 5000 | LLM trace tracking — UI at http://localhost:5000 |
+
+## Configuration
+
+Credentials are read from `docker/.env` (gitignored). Copy `docker/.env.example` to `docker/.env` — the defaults work for local development:
+
+```env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=marketing_app
 ```
 
-### View Logs
-
-```bash
-docker-compose logs -f postgres
-```
-
-### Connect to Database
-
-```bash
-# Using psql in Docker
-docker exec -it postgres psql -U postgres
-
-# Or using a client like pgAdmin, DBeaver, etc.
-# Host: localhost
-# Port: 5432 (default)
-# Database: postgres
-# Username: (from secrets/pg_user.txt)
-# Password: (from secrets/pg_pw.txt)
-```
-
-### Reset Database (Delete All Data)
-
-⚠️ **Warning: This will delete all data!**
-
-```bash
-docker-compose down
-rm -rf data/*
-docker-compose up -d
-npm run db:setup
-```
-
-## Troubleshooting
-
-### "Permission denied" for server.key
-
-PostgreSQL requires the private key to have specific permissions. The Docker container should handle this automatically, but if you have issues:
-
-On Linux/Mac:
-```bash
-chmod 600 certs/server.key
-```
-
-On Windows: The container will set permissions automatically.
-
-### "Connection refused" on localhost:5432
-
-1. Verify container is running: `docker-compose ps`
-2. Check logs: `docker-compose logs postgres`
-3. Ensure port 5432 is not already in use: `netstat -ano | findstr 5432`
-4. Try restarting: `docker-compose restart`
-
-### "SSL connection error"
-
-1. Verify certificates exist in `certs/` folder
-2. Regenerate certificates: `.\generate-certs.ps1`
-3. Check certificate permissions
-4. Restart container: `docker-compose restart`
-
-### "Password authentication failed"
-
-1. Verify password in `secrets/pg_pw.txt` matches your connection string
-2. Check username in `secrets/pg_user.txt`
-3. Restart container to apply new secrets: `docker-compose down && docker-compose up -d`
+These values must match the `DATABASE_URL` in the root `.env` file. The default `DATABASE_URL` in `.env.example` already matches.
 
 ## File Structure
 
 ```
 docker/
-├── docker-compose.yml       # Docker Compose configuration
-├── README.md                # This file
-├── .gitignore               # Git ignore rules
-├── data/                    # PostgreSQL data files (ignored by git)
-├── secrets/                 # Database credentials (ignored by git)
-│   ├── pg_user.txt
-│   └── pg_pw.txt
-└── logs/                    # (optional) bind mount if you add logging
+├── docker-compose.yml      # PostgreSQL + MLflow service definitions
+├── .env.example            # Docker credential template (KEY=value format)
+├── .env                    # Actual credentials (gitignored — copy from .env.example)
+├── README.md               # This file
+├── certs/                  # SSL certificates (if applicable)
+├── generate-certs.ps1      # Certificate generation script
+└── data/                   # Persistent volume data (gitignored)
+    ├── pgdata/             # PostgreSQL data files
+    └── mlflow/             # MLflow SQLite DB and artifacts
 ```
 
-## Configuration Details
+## Troubleshooting
 
-### Notes
+### "Connection refused" on localhost:5432
 
-- Supabase Postgres runs on `localhost:5432` by default in this setup.
-- Keep `secrets/pg_user.txt` and `secrets/pg_pw.txt` in sync with your `.env` connection strings.
-- For custom logging, you can mount a `./logs` directory and add logging flags to `command` in `docker-compose.yml`.
+1. Verify containers are running: `docker compose -f docker/docker-compose.yml ps`
+2. Check logs: `just logs`
+3. Ensure port 5432 is not in use by another process
 
-1. Use a managed PostgreSQL service (Vercel Postgres, AWS RDS, etc.)
-2. Change from `network_mode: host` to proper networking
-3. Use strong passwords and secure secret management
-4. Use proper SSL certificates (not self-signed)
-5. Configure backup strategies
-6. Implement monitoring and alerting
+### "Password authentication failed"
+
+1. Confirm `docker/.env` exists (copy from `docker/.env.example`)
+2. Confirm `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` in `docker/.env` match the credentials in `DATABASE_URL` in the root `.env`
+3. Restart containers: `docker compose -f docker/docker-compose.yml stop && docker compose -f docker/docker-compose.yml up -d`
+
+### Reset Database
+
+To drop and recreate all tables (preserves Docker volume):
+
+```bash
+just reset
+```
+
+This runs `alembic downgrade base && alembic upgrade head` — all data is deleted but the Docker volume and other services remain running.
 
 This Docker setup is **for local development only**.

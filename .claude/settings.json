@@ -1,0 +1,22 @@
+{
+	"mcpServers": {
+		"marketer-mcp": {
+			"url": "https://edge-platform.sitecorecloud.io/mcp/marketer-mcp-prod",
+            "auth": {
+                "type": "external"
+            }
+		},
+		"sitecore-documentation-docs": {
+			"type": "http",
+			"url": "https://sitecore.mcp.kapa.ai"
+		},
+		"playwright": {
+			"command": "npx",
+			"args": [
+				"-y",
+				"@playwright/mcp"
+			],
+			"type": "stdio"
+		}
+	}
+}
