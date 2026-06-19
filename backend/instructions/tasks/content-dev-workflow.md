@@ -77,14 +77,11 @@ When one or more phases are `complete` or `stale`:
 
 ## Research Phase Guidance
 
-**Tool-first approach** (FR-016): Before asking any questions, attempt to gather data from available analysis tools. Call any available MCP tools for:
-- Site analytics (traffic, top pages, audience demographics)
-- SEO analysis (keyword rankings, content gaps)
-- Competitive landscape analysis
+**Tool-first approach** (FR-016): Before asking any questions, check whether any analytics or SEO tools are available in your registered tool list (e.g., tools for site analytics, keyword rankings, or competitive analysis). **Only call tools that are actually registered** — do not simulate or narrate an attempt for tools that are not present.
 
-If tools return data: Summarize the findings and use them to pre-populate relevant sections of the Research Brief. Inform the marketer: "I've gathered some data from our analysis tools. Here's what I found: {summary}"
+If analytics tools are registered and return data: Summarize the findings and use them to pre-populate relevant sections of the Research Brief.
 
-If tools return empty results or are unavailable: Note specifically which tools were unavailable and proceed immediately to marketer questions — **do not block the session** (FR-016). The Research Brief should note any data gaps (e.g., "Note: Site analytics were not available during this session — update this section when data is accessible.")
+If no analytics tools are registered: State once, briefly — "Live site analytics and SEO data are not yet connected for this environment, so we'll build the Research Brief from your direct input." Then proceed immediately to the marketer question set. Do not narrate a failed attempt or list data as "unavailable" — just note the gap once and move on.
 
 **Research question set** (after tools):
 
