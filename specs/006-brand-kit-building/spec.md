@@ -8,6 +8,14 @@
 
 **Input**: User description: "Brand Kit Building — a backend capability that lets marketers grow and maintain their organization's brand kit through the assistant. There are three main workflows: (1) Document upload to brand kit: the marketer uploads a brand document (style guide, tone of voice doc, visual standards PDF, etc.) using the Document Management API, which adds it to the brand kit's document library so it can be ingested by the brand pipeline; (2) Pipeline ingestion & enrichment: after documents are uploaded, the marketer can trigger the brand ingestion pipeline (which processes documents into brand content) and the brand enrichment pipeline (which analyzes and enhances the brand kit content). Both pipelines are long-running and the assistant should give the marketer a way to monitor progress; (3) Brand kit from existing site: the marketer provides a URL for an existing live website, and the assistant uses the brand enrichment pipeline to analyze the site and generate or update brand kit content from it. All write operations require explicit user confirmation before the assistant proceeds. The brand kit must already exist in Sitecore (creating brand kits from scratch is out of scope); this spec is about adding to and improving existing brand kits."
 
+## Clarifications
+
+### Session 2026-06-19
+
+- Q: Can the ingestion and enrichment pipelines run simultaneously for the same brand kit? → A: Yes — both pipelines can run at the same time; the assistant tracks each independently and does not gate one based on the other's status.
+- Q: How many document names should be shown in the brand kit library view before truncating? → A: Up to 5 names; if more exist, show the count of remaining documents (e.g., "…and 8 more").
+- Q: What is the effect of running the processing pipeline on existing brand kit sections — does it replace or augment? → A: Processing overwrites existing brand kit sections by default. Marketers can protect specific subsections from being overwritten by marking them as "Non-AI Editable" before triggering the pipeline. Uploaded documents start in Draft status and are not used by the assistant's brand context until processing completes and moves them to Published status. Typical processing duration is 10–20 minutes.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Marketer Adds a Document to a Brand Kit (Priority: P1)
@@ -21,7 +29,7 @@ A marketer has brand reference materials — a style guide, tone of voice docume
 **Acceptance Scenarios**:
 
 1. **Given** a marketer wants to upload a document to a brand kit, **When** they initiate the upload, **Then** the assistant shows the current document count in the brand kit's library and asks for explicit confirmation before proceeding.
-2. **Given** the marketer confirms the upload, **When** the document is submitted, **Then** the assistant confirms the document was added successfully and names the file.
+2. **Given** the marketer confirms the upload, **When** the document is submitted, **Then** the assistant confirms the document was added successfully, names the file, and informs the marketer that it is in Draft status and will not affect brand guidelines until the processing pipeline is run.
 3. **Given** the marketer uploads a document in an unsupported format, **When** the upload is attempted, **Then** the assistant identifies the unsupported format and lists which formats are accepted — no partial upload occurs.
 4. **Given** the brand kit's library already contains a document with the same name, **When** the marketer uploads a new document with that name, **Then** the assistant warns about the naming conflict and requires the marketer to confirm before proceeding.
 
@@ -37,8 +45,8 @@ After uploading brand documents, a marketer wants to process those documents int
 
 **Acceptance Scenarios**:
 
-1. **Given** a marketer wants to run the brand ingestion pipeline, **When** they request it, **Then** the assistant describes what the pipeline will do and asks for explicit confirmation before triggering it.
-2. **Given** the marketer confirms, **When** the pipeline is started, **Then** the assistant confirms it is running and explains that a notification will appear when it finishes.
+1. **Given** a marketer wants to run the brand ingestion pipeline, **When** they request it, **Then** the assistant warns them that processing will overwrite existing AI-Editable brand kit sections, explains they can mark subsections as Non-AI Editable to protect manual edits, and asks for explicit confirmation before triggering.
+2. **Given** the marketer confirms, **When** the pipeline is started, **Then** the assistant confirms it is running and informs them that processing typically takes 10–20 minutes and a notification will appear when it completes.
 3. **Given** a pipeline is running, **When** the marketer sends other messages in the conversation, **Then** the pipeline continues running and the marketer can still use the assistant normally.
 4. **Given** a pipeline completes, **When** the result is received, **Then** the assistant notifies the marketer with a plain-language summary of what was processed and whether any issues occurred — without the marketer having to ask.
 5. **Given** a pipeline is already running, **When** the marketer tries to trigger the same pipeline again, **Then** the assistant informs them the pipeline is already in progress rather than starting a duplicate run.
@@ -71,13 +79,15 @@ A marketer wants to capture the brand identity already visible on their organiza
 - What happens if the marketer closes the assistant or navigates away while a pipeline is running? The pipeline continues on the brand service side; its status remains retrievable when the marketer returns.
 - What happens when a document the marketer wants to upload is larger than the maximum allowed size? The assistant informs the marketer of the size limit before attempting the upload and does not proceed.
 - What if the enrichment pipeline is already running when the marketer tries to start it with a site URL? The assistant informs the marketer it is already in progress rather than queuing a second run.
+- What if the marketer has manually customized brand kit subsections and then triggers processing? The assistant warns them that processing overwrites AI-Editable subsections by default, and prompts them to review and mark any customized subsections as Non-AI Editable before confirming the pipeline trigger.
+- What happens to brand context (spec 005) while a document is in Draft status? Draft documents have no effect on the assistant's loaded brand guidelines — only Published brand content is used. The marketer should be aware that uploaded documents require processing before influencing any brand-aware task.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The system MUST require the marketer to select an existing brand kit before performing any document upload or pipeline operation; creating a brand kit from scratch is explicitly out of scope.
-- **FR-002**: Before a document upload, the system MUST show the marketer the current state of the brand kit's document library — including document count and names where available — so they can make an informed decision.
+- **FR-002**: Before a document upload, the system MUST show the marketer the current state of the brand kit's document library — including the total document count and up to 5 document names. If more than 5 documents exist, the remaining count MUST be indicated (e.g., "…and 8 more") rather than listing all names.
 - **FR-003**: All document uploads and pipeline triggers MUST require explicit marketer confirmation before the operation is submitted to the brand content service — no automated writes.
 - **FR-004**: The system MUST support uploading documents in PDF and Word format at minimum.
 - **FR-005**: The system MUST reject documents exceeding the maximum allowed size before attempting the upload, with a clear message stating the limit.
@@ -86,17 +96,21 @@ A marketer wants to capture the brand identity already visible on their organiza
 - **FR-008**: The system MUST support triggering the brand enrichment pipeline for a selected brand kit with marketer confirmation.
 - **FR-009**: Pipeline operations MUST be non-blocking — the marketer MUST be able to continue using the assistant normally while a pipeline runs.
 - **FR-010**: The assistant MUST notify the marketer when a running pipeline completes or fails, without requiring the marketer to ask for a status update.
-- **FR-011**: If the marketer attempts to trigger a pipeline already in progress, the system MUST inform them of the in-progress run rather than starting a duplicate.
+- **FR-011**: If the marketer attempts to trigger a pipeline of the same type that is already in progress for the selected brand kit, the system MUST inform them of the in-progress run rather than starting a duplicate. Ingestion and enrichment pipelines MAY run simultaneously — each is tracked and reported independently.
 - **FR-012**: The system MUST accept a website URL as input and trigger the brand enrichment pipeline with that URL as the source for brand content generation.
 - **FR-013**: Before triggering the enrichment pipeline with a site URL, the system MUST validate that the URL is reachable; if it is not, the operation MUST NOT proceed and the marketer MUST be informed.
 - **FR-014**: Pipeline completion and failure notifications MUST include a plain-language summary of what was processed and whether any issues occurred.
+- **FR-015**: When a document upload succeeds, the assistant MUST inform the marketer that the document is in Draft status and will not influence brand context until the processing pipeline completes and moves it to Published status.
+- **FR-016**: Before the marketer triggers the processing pipeline, the assistant MUST warn them that processing will overwrite existing brand kit sections by default, and inform them that specific subsections can be marked as Non-AI Editable to protect manual edits from being overwritten.
+- **FR-017**: The system MUST allow the marketer to mark individual brand kit subsections as Non-AI Editable before triggering the processing pipeline, so that manually curated subsection content is preserved during the overwrite.
 
 ### Key Entities
 
 - **BrandKit**: An existing Sitecore brand kit selected by the marketer as the target for documents and pipeline operations. Creating brand kits is out of scope.
-- **BrandDocument**: A file in the brand kit's document library. Has a name, format, and upload status. Serves as source material for the ingestion pipeline.
-- **BrandDocumentLibrary**: The collection of documents currently associated with a brand kit. Shown to the marketer before any upload to establish current state.
-- **BrandPipelineRun**: A single execution of the ingestion or enrichment pipeline. Has a type (ingestion or enrichment), a status (running, completed, failed), and a result summary.
+- **BrandDocument**: A file in the brand kit's document library. Has a name, format, and lifecycle status: Draft (uploaded but not yet processed — not used by brand context) or Published (processed and actively contributing to brand guidelines).
+- **BrandDocumentLibrary**: The collection of documents currently associated with a brand kit. Shown to the marketer before any upload to establish current state (up to 5 names plus remaining count).
+- **BrandKitSubsection**: An individual guideline entry within a brand kit section. Has an editability flag: AI-Editable (default — may be overwritten by processing) or Non-AI Editable (protected — processing preserves the marketer's manual content for this subsection).
+- **BrandPipelineRun**: A single execution of the processing pipeline (ingestion or enrichment). Has a type, a status (running, completed, failed), a typical duration of 10–20 minutes, and a result summary indicating what was created, updated, or skipped.
 - **SiteEnrichmentSource**: A website URL provided by the marketer as the source for brand content generation via the enrichment pipeline.
 
 ## Success Criteria *(mandatory)*
@@ -120,4 +134,4 @@ A marketer wants to capture the brand identity already visible on their organiza
 - If no explicit document size limit is published by the brand content service, 50 MB is used as a reasonable default maximum for validation purposes.
 - The brand enrichment pipeline accepts a website URL as a source input and is capable of analyzing publicly accessible sites; private or authentication-gated sites may not be analyzable, and this is expected behavior rather than a system error.
 - Pipeline status is retrievable from the brand content service; real-time push notifications from the service are not assumed — status updates are obtained by querying the service after the pipeline is triggered.
-- Typical pipeline run duration is minutes, not seconds; the non-blocking design (SC-004) is essential to keep the assistant usable during processing.
+- Typical pipeline run duration is 10–20 minutes; the non-blocking design (SC-004) is essential to keep the assistant usable during processing. SC-003 (unsolicited completion notification) is particularly important given this duration.

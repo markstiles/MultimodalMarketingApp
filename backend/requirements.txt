@@ -17,3 +17,4 @@ mcp
 langchain-mcp-adapters
 pytest
 pytest-asyncio
+python-docx

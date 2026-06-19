@@ -4,7 +4,14 @@ from pathlib import Path
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _TASKS_DIR = _BACKEND_DIR / "instructions" / "tasks"
 _ALLOWED_TASKS = frozenset(
-    ["content-audit", "campaign-design", "seo-optimization", "component-population", "site-management"]
+    [
+        "content-audit",
+        "campaign-design",
+        "seo-optimization",
+        "component-population",
+        "site-management",
+        "content-dev-workflow",
+    ]
 )
 _TASK_NAME_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 _cache: dict[str, str] = {}

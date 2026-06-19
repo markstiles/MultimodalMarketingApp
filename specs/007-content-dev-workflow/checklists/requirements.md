@@ -1,7 +1,7 @@
-# Specification Quality Checklist: Brand Kit Building
+# Specification Quality Checklist: Content Development Workflow
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
-**Created**: 2026-06-18
+**Created**: 2026-06-19
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -31,7 +31,7 @@
 
 ## Notes
 
-- Spec is explicitly scoped to growing and maintaining existing brand kits; creating brand kits from scratch is out of scope and stated clearly in FR-001 and the Assumptions.
-- Three user stories cover the three distinct workflows: document upload (P1), pipeline run and monitoring (P2), and site-based brand content generation (P3).
-- Pipeline status updates are described at the user experience level (notification appears in conversation) without specifying the underlying mechanism.
-- Clarifications added (2026-06-19): simultaneous pipeline tracking (FR-011), document library display cap of 5 names (FR-002), Draft→Published document lifecycle (FR-015), overwrite warning and Non-AI Editable guard (FR-016, FR-017), and 10–20 minute typical processing duration (Assumptions).
+- This is the highest-level "orchestrator" spec in the system. It references spec 004 (document upload) and spec 005 (brand kit integration) as building blocks but does not depend on their implementation details.
+- Scope is deliberately bounded to one content project per site in v1; multiple concurrent projects are explicitly deferred.
+- The Execution phase is distinguished from the other five because it produces both an artifact and actual Sitecore content changes — this distinction is captured in FR-014 and the Assumptions.
+- Media library as persistent state store (no dedicated brief API) is a confirmed architectural constraint from the project design conversation.

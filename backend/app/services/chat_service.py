@@ -27,13 +27,39 @@ _MAX_HISTORY = 100
 _TRUNCATED_HISTORY = 50
 
 
+_TASK_SIGNALS: dict[str, list[str]] = {
+    "content-dev-workflow": [
+        "content strategy", "content strategies", "content plan", "content planning",
+        "editorial calendar", "content calendar", "content brief", "campaign brief",
+        "content development", "research brief", "content workflow",
+        "content structure", "variation plan", "execution checklist",
+        "content audit", "content phase", "build a strategy", "develop a strategy",
+    ],
+    "seo-optimization": [
+        "seo", "search engine", "meta description", "meta title", "page title",
+        "keyword", "ranking", "organic traffic", "search optimization",
+    ],
+}
+
+
+def _detect_task_name(message: str, history: list) -> Optional[str]:
+    """Return the most appropriate task overlay name, or None."""
+    search_text = message.lower()
+    for msg in history[-6:]:
+        search_text += " " + (msg.content or "").lower()
+    for task, signals in _TASK_SIGNALS.items():
+        if any(s in search_text for s in signals):
+            return task
+    return None
+
+
 async def stream_chat(
     db: AsyncSession,
     user_id: str,
     request: ChatRequest,
 ) -> AsyncGenerator[str, None]:
     """Yield SSE-formatted event strings for the chat stream."""
-    task_name: Optional[str] = None  # future: extract from context or message
+    task_name: Optional[str] = None  # resolved after history is loaded
 
     try:
         _span_ctx = mlflow.start_span(
@@ -41,7 +67,6 @@ async def stream_chat(
             attributes={
                 "conversation_id": request.conversation_id or "new",
                 "user_id": user_id,
-                "task_name": task_name or "",
                 "guardrail_category": classify_message(request.message) or "",
             },
         )
@@ -67,6 +92,9 @@ async def stream_chat(
 
         # Persist user message
         await append_message(db, conversation_id, MessageRole.user, request.message)
+
+        # Detect task overlay from current message + recent history
+        task_name = _detect_task_name(request.message, history)
 
         # Build message list for LangGraph
         system_prompt = load_instructions(task_name)
