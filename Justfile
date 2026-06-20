@@ -34,7 +34,7 @@ logs:
 
 # Run unit tests (no live stack needed)
 test-unit:
-    {{python}} -m pytest backend/tests/test_unit.py -v
+    {{python}} -m pytest backend/tests/ -v
 
 # Run end-to-end smoke tests against the live stack (requires `just dev` to be running)
 test:

@@ -5,6 +5,17 @@ from app.clients.content_workflow import (
     save_phase_artifact,
     scan_content_project_status,
 )
+from app.clients.pages_api import (
+    create_page,
+    create_page_version,
+    delete_page,
+    duplicate_page,
+    get_insert_options,
+    get_page_state,
+    rename_page,
+    search_pages,
+    update_page_fields,
+)
 
 _mcp_tools: list[BaseTool] = []
 
@@ -20,4 +31,13 @@ def get_all_tools() -> list[BaseTool]:
         scan_content_project_status,
         save_phase_artifact,
         get_phase_artifact_content,
+        search_pages,
+        get_insert_options,
+        create_page,
+        get_page_state,
+        rename_page,
+        duplicate_page,
+        update_page_fields,
+        create_page_version,
+        delete_page,
     ]

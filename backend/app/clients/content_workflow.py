@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from langchain_core.tools import tool
 
@@ -10,12 +11,75 @@ from app.services.content_workflow_service import (
     build_artifact_media_path,
     check_media_artifact_exists,
     download_and_extract_artifact,
+    ensure_phase_upload_folders,
     generate_phase_docx,
     get_sitecore_media_auth_token,
     upload_artifact_to_media_library,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_markdown_sections(text: str) -> list[dict]:
+    """Convert a markdown string into the sections list expected by generate_phase_docx.
+
+    ## headings become section headings; ### become subsections.
+    # headings (document title level) are ignored — the title is passed separately.
+    Text before the first heading is collected as an intro section.
+    """
+    sections: list[dict] = []
+    current_section: dict | None = None
+    current_sub: dict | None = None
+    buf: list[str] = []
+
+    def _flush() -> str:
+        content = "\n".join(buf).strip()
+        buf.clear()
+        return content
+
+    for line in text.splitlines():
+        if re.match(r"^#\s", line):          # h1 — title level, skip
+            _flush()
+        elif re.match(r"^##\s", line):        # h2 — section
+            if current_sub is not None:
+                current_sub["content"] = _flush()
+                current_sub = None
+            elif current_section is not None:
+                current_section["content"] = _flush()
+            else:
+                orphan = _flush()
+                if orphan:
+                    sections.append({"heading": "", "content": orphan, "subsections": []})
+            heading = re.sub(r"^##\s+", "", line).strip()
+            current_section = {"heading": heading, "content": "", "subsections": []}
+            sections.append(current_section)
+        elif re.match(r"^###\s", line):       # h3 — subsection
+            if current_sub is not None:
+                current_sub["content"] = _flush()
+            elif current_section is not None:
+                current_section["content"] = _flush()
+            else:
+                orphan = _flush()
+                if orphan:
+                    sections.append({"heading": "", "content": orphan, "subsections": []})
+            heading = re.sub(r"^###\s+", "", line).strip()
+            current_sub = {"heading": heading, "content": ""}
+            if current_section is None:
+                current_section = {"heading": "", "content": "", "subsections": []}
+                sections.append(current_section)
+            current_section["subsections"].append(current_sub)
+        else:
+            buf.append(line)
+
+    tail = _flush()
+    if current_sub is not None:
+        current_sub["content"] = tail
+    elif current_section is not None:
+        current_section["content"] = tail
+    elif tail:
+        sections.append({"heading": "", "content": tail, "subsections": []})
+
+    return sections
 
 
 @tool
@@ -104,22 +168,25 @@ async def save_phase_artifact(
     site: str,
     phase: str,
     title: str,
-    sections: list[dict],
+    content: str,
 ) -> dict:
     """
-    Generate a Word document (.docx) from the provided structured content and save it
-    to the canonical Sitecore media library path for the specified phase. ONLY call this
-    tool after the marketer has explicitly approved the artifact.
+    Save the approved phase document to the Sitecore media library.
+
+    Call this once the marketer has approved the content for the current phase.
+    Pass the full document body as markdown — sections (##), subsections (###),
+    and body text are converted to a Word document automatically.
 
     Args:
         tenant: Tenant name from active session context
         site: Site name from active session context
         phase: One of: Research, Strategy, Structure, Content, Variation, Execution
         title: Document title (e.g. "Research Brief — Acme Corp / US Site")
-        sections: List of dicts with keys: heading (str), content (str),
-                  subsections (list of {heading, content})
+        content: Full document body as markdown
 
-    Returns ArtifactSaveResult with success status and media library path.
+    If the result contains upload_unavailable=true, the Word document was generated
+    but the media library was unreachable — confirm the content to the user and
+    proceed to the next phase normally.
     """
     if phase not in PHASE_ARTIFACT_MAP:
         valid = ", ".join(PHASES_ORDERED)
@@ -135,6 +202,7 @@ async def save_phase_artifact(
     info = PHASE_ARTIFACT_MAP[phase]
     media_path = build_artifact_media_path(tenant, site, phase)
 
+    sections = _parse_markdown_sections(content)
     try:
         docx_bytes = generate_phase_docx(phase, title, tenant, site, sections)
     except Exception as exc:
@@ -165,6 +233,8 @@ async def save_phase_artifact(
     )
     return {
         "success": result["success"],
+        "docx_generated": result.get("docx_generated", result["success"]),
+        "upload_unavailable": result.get("upload_unavailable", False),
         "phase": phase,
         "media_path": result.get("media_path", media_path),
         "filename": info["filename"],
