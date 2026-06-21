@@ -67,18 +67,13 @@ async def build_mcp_server_config() -> dict[str, Any]:
     """Build the server config dict for MultiServerMCPClient."""
     servers: dict[str, Any] = {}
 
-    # Sitecore documentation MCP (Kapa.ai) — requires an API key
-    docs_api_key = os.environ.get("SITECORE_DOCS_MCP_API_KEY", "")
-    if docs_api_key:
-        docs_url = os.environ.get("SITECORE_DOCS_MCP_URL", "https://sitecore.mcp.kapa.ai")
-        servers["sitecore_docs"] = {
-            "url": docs_url,
-            "transport": "streamable_http",
-            "headers": {"Authorization": f"Bearer {docs_api_key}"},
-        }
-        logger.info("Sitecore docs MCP configured: %s", docs_url)
-    else:
-        logger.info("Sitecore docs MCP skipped (SITECORE_DOCS_MCP_API_KEY not set)")
+    # Sitecore documentation MCP (Kapa.ai) — no authentication required
+    docs_url = os.environ.get("SITECORE_DOCS_MCP_URL", "https://sitecore.mcp.kapa.ai")
+    servers["sitecore_docs"] = {
+        "url": docs_url,
+        "transport": "streamable_http",
+    }
+    logger.info("Sitecore docs MCP configured: %s", docs_url)
 
     # Marketer MCP (OAuth)
     marketer_url = os.environ.get(

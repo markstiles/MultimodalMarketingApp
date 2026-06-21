@@ -140,8 +140,7 @@ async def test_audience_sent_in_token_request(monkeypatch):
 
 # ── build_mcp_server_config ───────────────────────────────────────────────────
 
-async def test_docs_server_included_when_api_key_set(monkeypatch):
-    monkeypatch.setenv("SITECORE_DOCS_MCP_API_KEY", "docs-key-123")
+async def test_docs_server_always_included(monkeypatch):
     monkeypatch.setenv("SITECORE_CLIENT_ID_AUTOMATION", "cid")
     monkeypatch.setenv("SITECORE_CLIENT_SECRET_AUTOMATION", "csecret")
 
@@ -151,24 +150,10 @@ async def test_docs_server_included_when_api_key_set(monkeypatch):
         config = await build_mcp_server_config()
 
     assert "sitecore_docs" in config
-    assert "docs-key-123" in config["sitecore_docs"]["headers"]["Authorization"]
-
-
-async def test_docs_server_skipped_when_api_key_missing(monkeypatch):
-    monkeypatch.delenv("SITECORE_DOCS_MCP_API_KEY", raising=False)
-    monkeypatch.setenv("SITECORE_CLIENT_ID_AUTOMATION", "cid")
-    monkeypatch.setenv("SITECORE_CLIENT_SECRET_AUTOMATION", "csecret")
-
-    mock_http = _mock_http_client()
-    with patch("app.clients.mcp_client.httpx.AsyncClient", return_value=mock_http):
-        from app.clients.mcp_client import build_mcp_server_config
-        config = await build_mcp_server_config()
-
-    assert "sitecore_docs" not in config
+    assert "headers" not in config["sitecore_docs"]
 
 
 async def test_marketer_server_included_on_auth_success(monkeypatch):
-    monkeypatch.delenv("SITECORE_DOCS_MCP_API_KEY", raising=False)
     monkeypatch.setenv("SITECORE_CLIENT_ID_AUTOMATION", "cid")
     monkeypatch.setenv("SITECORE_CLIENT_SECRET_AUTOMATION", "csecret")
 
@@ -183,7 +168,6 @@ async def test_marketer_server_included_on_auth_success(monkeypatch):
 
 
 async def test_marketer_server_skipped_on_auth_failure(monkeypatch):
-    monkeypatch.delenv("SITECORE_DOCS_MCP_API_KEY", raising=False)
     for var in ("SITECORE_CLIENT_ID_AUTOMATION", "SITECORE_CLIENT_SECRET_AUTOMATION",
                 "AUTHOR_APP_ID", "AUTHOR_APP_CLIENT_CREDENTIALS"):
         monkeypatch.delenv(var, raising=False)
@@ -195,7 +179,6 @@ async def test_marketer_server_skipped_on_auth_failure(monkeypatch):
 
 
 async def test_docs_url_env_override(monkeypatch):
-    monkeypatch.setenv("SITECORE_DOCS_MCP_API_KEY", "key")
     monkeypatch.setenv("SITECORE_DOCS_MCP_URL", "https://custom-docs.example.com")
     monkeypatch.setenv("SITECORE_CLIENT_ID_AUTOMATION", "cid")
     monkeypatch.setenv("SITECORE_CLIENT_SECRET_AUTOMATION", "csecret")

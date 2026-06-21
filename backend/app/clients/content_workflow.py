@@ -5,13 +5,13 @@ import re
 from langchain_core.tools import tool
 
 from app.services.content_workflow_service import (
+    CONTENT_STRATEGY_FOLDER,
     PHASE_ARTIFACT_MAP,
     PHASES_ORDERED,
     STALENESS_DAYS,
     build_artifact_media_path,
     check_media_artifact_exists,
     download_and_extract_artifact,
-    ensure_phase_upload_folders,
     generate_phase_docx,
     get_sitecore_media_auth_token,
     upload_artifact_to_media_library,
@@ -85,16 +85,17 @@ def _parse_markdown_sections(text: str) -> list[dict]:
 @tool
 async def scan_content_project_status(tenant: str, site: str) -> dict:
     """
-    Scan all six phase folders in the Sitecore media library and return the current
-    content project state for the given site. Call this at the start of any content
-    development session to detect existing artifacts and determine the next recommended phase.
+    Scan all five marketing pipeline phase folders in the Sitecore media library and
+    return the current project state for the given site. Call this at the start of
+    every marketing pipeline session to detect existing artifacts and determine the
+    next recommended phase.
 
     Args:
         tenant: Tenant name from active session context (e.g. "acme-corp")
         site: Site name from active session context (e.g. "us-site")
 
-    Returns ContentProjectSummary including phase statuses, staleness flags, and
-    the recommended next phase.
+    Returns MarketingProjectSummary including phase statuses, staleness flags, and
+    the recommended next phase. Phases: Research, Strategy, BrandVoice, Brief, Campaign.
     """
     try:
         auth_token = await get_sitecore_media_auth_token()
@@ -142,7 +143,7 @@ async def scan_content_project_status(tenant: str, site: str) -> dict:
         phases.append(
             {
                 "phase": phase,
-                "folder_name": info["folder"],
+                "folder_name": CONTENT_STRATEGY_FOLDER,
                 "canonical_filename": info["filename"],
                 "media_path": media_path,
                 "status": status,
@@ -180,13 +181,12 @@ async def save_phase_artifact(
     Args:
         tenant: Tenant name from active session context
         site: Site name from active session context
-        phase: One of: Research, Strategy, Structure, Content, Variation, Execution
+        phase: One of: Research, Strategy, BrandVoice, Brief, Campaign
         title: Document title (e.g. "Research Brief — Acme Corp / US Site")
         content: Full document body as markdown
 
-    If the result contains upload_unavailable=true, the Word document was generated
-    but the media library was unreachable — confirm the content to the user and
-    proceed to the next phase normally.
+    Returns success status and media library path. On failure the error field
+    describes what went wrong.
     """
     if phase not in PHASE_ARTIFACT_MAP:
         valid = ", ".join(PHASES_ORDERED)
@@ -233,8 +233,6 @@ async def save_phase_artifact(
     )
     return {
         "success": result["success"],
-        "docx_generated": result.get("docx_generated", result["success"]),
-        "upload_unavailable": result.get("upload_unavailable", False),
         "phase": phase,
         "media_path": result.get("media_path", media_path),
         "filename": info["filename"],
@@ -254,7 +252,7 @@ async def get_phase_artifact_content(tenant: str, site: str, phase: str) -> dict
     Args:
         tenant: Tenant name from active session context
         site: Site name from active session context
-        phase: One of: Research, Strategy, Structure, Content, Variation, Execution
+        phase: One of: Research, Strategy, BrandVoice, Brief, Campaign
 
     Returns ArtifactContentResult with extracted text content and modification date.
     """

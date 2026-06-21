@@ -1,5 +1,4 @@
 import io
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -14,28 +13,34 @@ logger = logging.getLogger(__name__)
 # ── Phase artifact registry ──────────────────────────────────────────────────
 
 PHASE_ARTIFACT_MAP: dict[str, dict[str, str]] = {
-    "Research":  {"folder": "Research",  "filename": "research-brief.docx"},
-    "Strategy":  {"folder": "Strategy",  "filename": "content-strategy.docx"},
-    "Structure": {"folder": "Structure", "filename": "content-structure.docx"},
-    "Content":   {"folder": "Content",   "filename": "content-plan.docx"},
-    "Variation": {"folder": "Variation", "filename": "variation-plan.docx"},
-    "Execution": {"folder": "Execution", "filename": "execution-checklist.docx"},
+    "Research":   {"filename": "research-brief.docx"},
+    "Strategy":   {"filename": "marketing-strategy.docx"},
+    "BrandVoice": {"filename": "brand-voice-summary.docx"},
+    "Brief":      {"filename": "campaign-brief.docx"},
+    "Campaign":   {"filename": "campaign-plan.docx"},
 }
+
+CONTENT_STRATEGY_FOLDER = "Content Strategy"
 
 PHASES_ORDERED: list[str] = list(PHASE_ARTIFACT_MAP.keys())
 STALENESS_DAYS = 365
 
 # Sitecore template ID for media library folders
-FOLDER_TEMPLATE_ID = "{FE5DD826-48C6-436D-B87A-7C4210C7413B}"
+FOLDER_TEMPLATE_ID = "FE5DD826-48C6-436D-B87A-7C4210C7413B"
 
 
 def build_artifact_media_path(tenant: str, site: str, phase: str) -> str:
     info = PHASE_ARTIFACT_MAP.get(phase)
     if not info:
         raise ValueError(f"Unknown phase: {phase!r}")
+    # Strip the extension: this instance's InvalidItemNameChars includes '.' so
+    # Sitecore creates items without the extension in their path name. The
+    # physical filename (with .docx) is used only for the multipart upload.
+    filename = info["filename"]
+    item_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     return (
         f"/sitecore/Media Library/Project/{tenant}/{site}"
-        f"/Content Strategy/{info['folder']}/{info['filename']}"
+        f"/{CONTENT_STRATEGY_FOLDER}/{item_name}"
     )
 
 
@@ -136,8 +141,8 @@ def generate_phase_docx(
 
 # ── Media folder management ───────────────────────────────────────────────────
 
-async def _ssc_item_exists(cm_host: str, path: str, auth_token: str) -> bool:
-    """Return True if a Sitecore item exists at *path* (SSC API HEAD/GET)."""
+async def _ssc_get_item_id(cm_host: str, path: str, auth_token: str) -> str | None:
+    """Return the bare GUID (no braces) for the item at *path*, or None."""
     try:
         async with httpx.AsyncClient(timeout=8) as http:
             resp = await http.get(
@@ -145,30 +150,44 @@ async def _ssc_item_exists(cm_host: str, path: str, auth_token: str) -> bool:
                 params={"database": "master", "path": path},
                 headers={"Authorization": f"Bearer {auth_token}"},
             )
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            raw_id = resp.json().get("ItemID", "")
+            return raw_id.strip("{}") if raw_id else None
+        return None
     except Exception:
-        return False
+        return None
+
+
+async def _ssc_item_exists(cm_host: str, path: str, auth_token: str) -> bool:
+    """Return True if a Sitecore item exists at *path* (SSC API)."""
+    return (await _ssc_get_item_id(cm_host, path, auth_token)) is not None
 
 
 async def _create_media_folder(
     cm_host: str, parent_path: str, folder_name: str, auth_token: str
 ) -> bool:
     """Create a media-library folder via the GraphQL authoring API."""
-    mutation = """
-mutation CreateMediaFolder($input: CreateItemInput!) {
-  createItem(input: $input) {
-    item { itemId path }
-  }
-}
+    # CreateItemInput.parent is typed ID! — pass the bare GUID obtained from SSC.
+    # Declaring the variable as String! (even with a valid GUID string) is rejected.
+    # templateId is inlined as a literal to avoid Guid scalar parseValue issues.
+    parent_id = await _ssc_get_item_id(cm_host, parent_path, auth_token)
+    if not parent_id:
+        logger.warning("Cannot create %s/%s: parent not found via SSC", parent_path, folder_name)
+        return False
+
+    mutation = f"""
+mutation CreateMediaFolder($name: String!, $parent: ID!) {{
+  createItem(input: {{
+    name: $name
+    templateId: "{FOLDER_TEMPLATE_ID}"
+    parent: $parent
+    language: "en"
+  }}) {{
+    item {{ itemId path }}
+  }}
+}}
 """
-    variables = {
-        "input": {
-            "name": folder_name,
-            "templateId": FOLDER_TEMPLATE_ID,
-            "parent": parent_path,
-            "language": "en",
-        }
-    }
+    variables = {"name": folder_name, "parent": parent_id}
     try:
         async with httpx.AsyncClient(timeout=15) as http:
             resp = await http.post(
@@ -199,34 +218,55 @@ mutation CreateMediaFolder($input: CreateItemInput!) {
 async def ensure_phase_upload_folders(
     tenant: str, site: str, phase: str, auth_token: str
 ) -> None:
-    """Ensure the Content Strategy folder and per-phase subfolder exist in the media library.
+    """Ensure the Content Strategy folder exists in the media library.
 
-    The site folder (/sitecore/Media Library/Project/{tenant}/{site}) is assumed to exist.
-    Creates any missing ancestors using the media-folder template via GraphQL authoring API.
-    Failures are logged but never raise — callers should still attempt the upload.
+    All phase artifacts are stored flat under Content Strategy — no per-phase
+    subfolders. The site folder is assumed to exist. Failures are logged but
+    never raise — callers should still attempt the upload.
     """
     cm_host = os.environ.get("SITECORE_CM_HOST", "").rstrip("/")
     if not cm_host:
         return
 
-    info = PHASE_ARTIFACT_MAP.get(phase)
-    if not info:
+    if phase not in PHASE_ARTIFACT_MAP:
         return
 
     site_path = f"/sitecore/Media Library/Project/{tenant}/{site}"
-    cs_path = f"{site_path}/Content Strategy"
-    phase_path = f"{cs_path}/{info['folder']}"
+    cs_path = f"{site_path}/{CONTENT_STRATEGY_FOLDER}"
 
     if not await _ssc_item_exists(cm_host, cs_path, auth_token):
-        logger.info("Creating 'Content Strategy' folder under %s", site_path)
-        await _create_media_folder(cm_host, site_path, "Content Strategy", auth_token)
-
-    if not await _ssc_item_exists(cm_host, phase_path, auth_token):
-        logger.info("Creating '%s' folder under Content Strategy", info["folder"])
-        await _create_media_folder(cm_host, cs_path, info["folder"], auth_token)
+        logger.info("Creating '%s' folder under %s", CONTENT_STRATEGY_FOLDER, site_path)
+        await _create_media_folder(cm_host, site_path, CONTENT_STRATEGY_FOLDER, auth_token)
 
 
 # ── Media library upload ──────────────────────────────────────────────────────
+
+def _media_item_path(full_path: str) -> str:
+    """Return the itemPath for uploadMedia: media-library-relative, no extension.
+
+    /sitecore/Media Library/Project/t/s/Research/research-brief.docx
+      → Project/t/s/Research/research-brief
+
+    uploadMedia rejects the sitecore/media library prefix, leading slashes, and
+    file extensions in item names (dots are invalid per this instance's
+    InvalidItemNameChars setting). Pass includeExtensionInItemName=true in the
+    mutation so Sitecore appends the extension from the uploaded file, keeping
+    the resulting item path consistent with build_artifact_media_path.
+    """
+    path = full_path.lstrip("/")
+    prefix = "sitecore/media library/"
+    if path.lower().startswith(prefix):
+        path = path[len(prefix):]
+    # Strip extension from the item name (last path segment).
+    if "/" in path:
+        folder, _, name = path.rpartition("/")
+        if "." in name:
+            name = name.rsplit(".", 1)[0]
+        path = f"{folder}/{name}"
+    elif "." in path:
+        path = path.rsplit(".", 1)[0]
+    return path
+
 
 async def upload_artifact_to_media_library(
     tenant: str,
@@ -237,19 +277,14 @@ async def upload_artifact_to_media_library(
 ) -> dict:
     info = PHASE_ARTIFACT_MAP.get(phase)
     if not info:
-        return {
-            "success": False,
-            "error": f"Unknown phase: {phase!r}",
-            "media_path": None,
-            "overwrite": False,
-        }
+        return {"success": False, "error": f"Unknown phase: {phase!r}", "media_path": None, "overwrite": False}
 
     media_path = build_artifact_media_path(tenant, site, phase)
-    agents_base = os.environ.get(
-        "SITECORE_AGENTS_API_BASE_URL",
-        "https://edge-platform.sitecorecloud.io/stream/ai-agent-api",
-    ).rstrip("/")
-    upload_url = f"{agents_base}/api/v1/assets/upload"
+    cm_host = os.environ.get("SITECORE_CM_HOST", "").rstrip("/")
+    if not cm_host:
+        return {"success": False, "error": "SITECORE_CM_HOST not configured", "media_path": media_path, "overwrite": False}
+
+    graphql_url = f"{cm_host}/sitecore/api/authoring/graphql/v1"
 
     overwrite = False
     try:
@@ -258,103 +293,86 @@ async def upload_artifact_to_media_library(
     except Exception:
         pass
 
-    # Create Content Strategy and phase folders if they don't exist yet.
     try:
         await ensure_phase_upload_folders(tenant, site, phase, auth_token)
     except Exception as exc:
         logger.warning("Folder pre-creation failed (upload may still succeed): %s", exc)
 
-    folder_path = (
-        f"/sitecore/Media Library/Project/{tenant}/{site}"
-        f"/Content Strategy/{info['folder']}"
-    )
-
-    # Sitecore item names don't include the extension — the extension field covers that.
-    asset_name = info["filename"].rsplit(".", 1)[0]  # "research-brief.docx" → "research-brief"
-
-    # Agent API validates siteName against registered Sitecore sites. Use the
-    # configured default site name (SITECORE_PUBLIC_DEFAULT_SITE_NAME) when available;
-    # the tool's `site` context value is a page-context ID that may not match the
-    # Sitecore site name/handle required by the API.
-    site_name_for_api = os.environ.get("SITECORE_PUBLIC_DEFAULT_SITE_NAME") or site
-
-    upload_request = json.dumps({
-        "name": asset_name,
-        "itemPath": folder_path,
-        "language": "en",
-        "extension": "docx",
-        "siteName": site_name_for_api,
-    })
-
-    logger.info(
-        "Media upload → url=%s filename=%s upload_request=%s",
-        upload_url, info["filename"], upload_request,
-    )
-
+    # Step 1 — obtain a presigned upload URL from the GraphQL authoring API.
+    # Do NOT set includeExtensionInItemName: this instance's InvalidItemNameChars
+    # includes '.', so appending ".docx" to the item name produces "research-brief docx"
+    # (dot → space). The item is created under the bare name (e.g. "research-brief"),
+    # which is what build_artifact_media_path and check_media_artifact_exists use.
+    mutation = """
+mutation UploadMedia($itemPath: String!) {
+  uploadMedia(input: {
+    itemPath: $itemPath
+    overwriteExisting: true
+  }) {
+    presignedUploadUrl
+  }
+}
+"""
+    logger.info("Requesting presigned upload URL for %s", media_path)
     try:
-        async with httpx.AsyncClient(timeout=30) as http:
+        async with httpx.AsyncClient(timeout=15) as http:
             resp = await http.post(
-                upload_url,
-                headers={"Authorization": f"Bearer {auth_token}"},
+                graphql_url,
+                json={"query": mutation, "variables": {"itemPath": _media_item_path(media_path)}},
+                headers={"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"},
+            )
+        if not resp.is_success:
+            logger.error("uploadMedia mutation HTTP %d: %s", resp.status_code, resp.text[:500])
+            return {
+                "success": False,
+                "error": f"uploadMedia mutation failed: HTTP {resp.status_code} — {resp.text[:500]}",
+                "media_path": media_path,
+                "overwrite": overwrite,
+            }
+        body = resp.json()
+        if body.get("errors"):
+            logger.error("uploadMedia GraphQL errors: %s", body["errors"])
+            return {
+                "success": False,
+                "error": f"uploadMedia mutation error: {body['errors']}",
+                "media_path": media_path,
+                "overwrite": overwrite,
+            }
+        presigned_url = body["data"]["uploadMedia"]["presignedUploadUrl"]
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Timed out requesting presigned upload URL", "media_path": media_path, "overwrite": overwrite}
+    except Exception as exc:
+        return {"success": False, "error": f"Failed to get presigned upload URL: {exc}", "media_path": media_path, "overwrite": overwrite}
+
+    # Step 2 — upload file bytes to the presigned URL.
+    # This Sitecore instance routes presigned URLs through its own CM host, so
+    # the Bearer token is still required (unlike true pre-signed S3 URLs).
+    logger.info("Uploading %s via presigned URL (overwrite=%s)", info["filename"], overwrite)
+    try:
+        async with httpx.AsyncClient(timeout=60) as http:
+            resp = await http.post(
+                presigned_url,
                 files={
                     "file": (
                         info["filename"],
                         docx_bytes,
-                        "application/vnd.openxmlformats-officedocument"
-                        ".wordprocessingml.document",
-                    ),
-                    "upload_request": (None, upload_request),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
                 },
+                headers={"Authorization": f"Bearer {auth_token}"},
             )
         if not resp.is_success:
-            full_body = resp.text
-            logger.error(
-                "Media upload failed: %d | url=%s | body=%s",
-                resp.status_code, upload_url, full_body,
-            )
-            # The Agent API upload endpoint has a confirmed server-side bug where
-            # upload_request is never parsed from multipart bodies (HTTP 400 "Field
-            # required"). Surface a clean message for this known case so the LLM
-            # can handle it gracefully without alarming the user.
-            known_api_bug = (
-                resp.status_code == 400
-                and "upload_request" in full_body
-                and "Field required" in full_body
-            )
-            if known_api_bug:
-                user_msg = (
-                    "The document was generated successfully but could not be saved to "
-                    "the Sitecore media library (upload API unavailable). "
-                    "The artifact content is available in this conversation."
-                )
-                return {
-                    "success": False,
-                    "docx_generated": True,
-                    "upload_unavailable": True,
-                    "error": user_msg,
-                    "media_path": media_path,
-                    "overwrite": overwrite,
-                }
+            logger.error("Presigned upload HTTP %d: %s", resp.status_code, resp.text[:500])
             return {
                 "success": False,
-                "error": f"Media library upload failed: HTTP {resp.status_code} — {full_body[:2000]}",
+                "error": f"Presigned upload failed: HTTP {resp.status_code} — {resp.text[:500]}",
                 "media_path": media_path,
                 "overwrite": overwrite,
             }
     except httpx.TimeoutException:
-        return {
-            "success": False,
-            "error": "Media library upload timed out after 30 seconds",
-            "media_path": media_path,
-            "overwrite": overwrite,
-        }
+        return {"success": False, "error": "Media upload timed out after 60 seconds", "media_path": media_path, "overwrite": overwrite}
     except Exception as exc:
-        return {
-            "success": False,
-            "error": f"Media library upload failed: {exc}",
-            "media_path": media_path,
-            "overwrite": overwrite,
-        }
+        return {"success": False, "error": f"Media upload failed: {exc}", "media_path": media_path, "overwrite": overwrite}
 
     logger.info("Uploaded %s to %s (overwrite=%s)", info["filename"], media_path, overwrite)
     return {"success": True, "media_path": media_path, "overwrite": overwrite, "error": None}

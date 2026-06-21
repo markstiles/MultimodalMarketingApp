@@ -22,7 +22,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full bg-white" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} />
+      <MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} loading={loading} />
 
       {error && (
         <div

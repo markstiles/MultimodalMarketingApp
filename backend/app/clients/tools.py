@@ -1,10 +1,18 @@
 from langchain_core.tools import BaseTool
 
+from app.clients.brand_kit import (
+    create_org_brand_kit,
+    get_brand_voice_summary,
+    import_brand_document,
+    list_org_brand_kits,
+    review_content_against_brand,
+)
 from app.clients.content_workflow import (
     get_phase_artifact_content,
     save_phase_artifact,
     scan_content_project_status,
 )
+from app.clients.marketing_research import search_market_research
 from app.clients.pages_api import (
     create_page,
     create_page_version,
@@ -31,6 +39,12 @@ def get_all_tools() -> list[BaseTool]:
         scan_content_project_status,
         save_phase_artifact,
         get_phase_artifact_content,
+        search_market_research,
+        list_org_brand_kits,
+        get_brand_voice_summary,
+        create_org_brand_kit,
+        import_brand_document,
+        review_content_against_brand,
         search_pages,
         get_insert_options,
         create_page,

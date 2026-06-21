@@ -1,4 +1,3 @@
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,24 +12,26 @@ def anyio_backend(request):
 
 
 class TestBuildArtifactMediaPath:
-    def test_all_six_phases_produce_correct_paths(self):
+    def test_all_five_phases_produce_correct_paths(self):
         from app.services.content_workflow_service import build_artifact_media_path
 
+        # All phase artifacts live flat under "Content Strategy" — no per-phase subfolders.
+        # Paths use item names WITHOUT extension: this instance's InvalidItemNameChars
+        # includes '.', so Sitecore stores items as "research-brief" not "research-brief.docx".
         cases = {
-            "Research": "research-brief.docx",
-            "Strategy": "content-strategy.docx",
-            "Structure": "content-structure.docx",
-            "Content": "content-plan.docx",
-            "Variation": "variation-plan.docx",
-            "Execution": "execution-checklist.docx",
+            "Research":   "research-brief",
+            "Strategy":   "marketing-strategy",
+            "BrandVoice": "brand-voice-summary",
+            "Brief":      "campaign-brief",
+            "Campaign":   "campaign-plan",
         }
         tenant = "acme-corp"
         site = "us-site"
-        for phase, filename in cases.items():
+        for phase, item_name in cases.items():
             path = build_artifact_media_path(tenant, site, phase)
             expected = (
                 f"/sitecore/Media Library/Project/{tenant}/{site}"
-                f"/Content Strategy/{phase}/{filename}"
+                f"/Content Strategy/{item_name}"
             )
             assert path == expected, f"Phase {phase}: expected {expected!r}, got {path!r}"
 
@@ -43,32 +44,38 @@ class TestBuildArtifactMediaPath:
     def test_tenant_and_site_interpolated(self):
         from app.services.content_workflow_service import build_artifact_media_path
 
-        path = build_artifact_media_path("my-tenant", "my-site", "Content")
+        path = build_artifact_media_path("my-tenant", "my-site", "Campaign")
         assert "/my-tenant/my-site/" in path
 
 
 # ── Upload artifact HTTP contract ─────────────────────────────────────────────
 #
-# These tests exercise upload_artifact_to_media_library directly — NOT via the
-# @tool wrapper — so the actual URL, headers, and multipart body are validated.
-# This is the layer that produced the production 404 when the URL and request
-# format were wrong.
+# Upload now uses a two-step GraphQL presigned-URL flow:
+#   1. POST uploadMedia mutation → receive presignedUploadUrl
+#   2. POST file bytes to the presigned URL (no auth header — self-signed)
+
+_PRESIGNED_URL = "https://presigned.example.com/upload?sig=abc"
+_PRESIGNED_RESPONSE = {"data": {"uploadMedia": {"presignedUploadUrl": _PRESIGNED_URL}}}
+
 
 class TestUploadArtifactToMediaLibrary:
-    """Validate the HTTP call made by upload_artifact_to_media_library.
+    """Validate the two-step GraphQL + presigned-URL upload flow."""
 
-    These tests intercept the httpx.AsyncClient at the module level so we can
-    assert on the exact URL, headers, and multipart body sent to the Sitecore
-    Agent API — the layer that was broken and untested before.
-    """
+    def _make_fake_client(self, responses=None, raise_exc=None):
+        """Return (FakeClientClass, captured_list).
 
-    def _make_fake_client(self, status_code=201, raise_exc=None, resp_text=""):
-        """Return (FakeClientClass, captured_dict).
-
-        FakeClientClass is a drop-in for httpx.AsyncClient.
-        captured_dict is populated when post() is called.
+        responses: list of (status_code, body) where body is a dict (JSON-serialised)
+                   or a plain string. Calls are served in order.
+        Default: two-step success — GraphQL returns presigned URL, presigned upload returns 200.
         """
-        captured = {}
+        if responses is None:
+            responses = [
+                (200, _PRESIGNED_RESPONSE),
+                (200, ""),
+            ]
+
+        captured = []
+        call_idx = [0]
 
         class FakeClient:
             def __init__(self, **kwargs):
@@ -80,215 +87,216 @@ class TestUploadArtifactToMediaLibrary:
             async def __aexit__(self, *args):
                 return False
 
+            async def get(self, url, **kwargs):
+                resp = MagicMock()
+                resp.status_code = 404
+                resp.is_success = False
+                return resp
+
             async def post(self, url, **kwargs):
                 if raise_exc:
                     raise raise_exc
-                captured["url"] = url
-                captured["headers"] = kwargs.get("headers", {})
-                captured["data"] = kwargs.get("data", {})
-                captured["files"] = kwargs.get("files", {})
+                idx = call_idx[0]
+                call_idx[0] += 1
+                status, body = responses[idx] if idx < len(responses) else (500, "unexpected call")
+                entry = {
+                    "url": url,
+                    "headers": kwargs.get("headers", {}),
+                    "json": kwargs.get("json"),
+                    "files": kwargs.get("files", {}),
+                }
+                captured.append(entry)
                 resp = MagicMock()
-                resp.status_code = status_code
-                resp.is_success = 200 <= status_code < 300
-                resp.text = resp_text
+                resp.status_code = status
+                resp.is_success = 200 <= status < 300
+                if isinstance(body, dict):
+                    resp.json = lambda b=body: b
+                    resp.text = str(body)
+                else:
+                    resp.json = MagicMock(side_effect=ValueError("not json"))
+                    resp.text = body or ""
                 return resp
 
         return FakeClient, captured
 
-    async def test_posts_to_correct_url_path(self, monkeypatch):
-        from app.services.content_workflow_service import upload_artifact_to_media_library
-
-        FakeClient, captured = self._make_fake_client(201)
+    def _common_patches(self, monkeypatch, FakeClient):
+        monkeypatch.setenv("SITECORE_CM_HOST", "https://cm.example.com")
         monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
         monkeypatch.setattr(
             "app.services.content_workflow_service.check_media_artifact_exists",
             AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
         )
-
-        await upload_artifact_to_media_library("tenant", "site", "Research", b"bytes", "tok")
-
-        assert "/api/v1/assets/upload" in captured["url"]
-
-    async def test_url_does_not_use_old_streaming_path(self, monkeypatch):
-        """Regression: old URL was /api/stream/agents/media/upload — always 404."""
-        from app.services.content_workflow_service import upload_artifact_to_media_library
-
-        FakeClient, captured = self._make_fake_client(201)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
         monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
+            "app.services.content_workflow_service.ensure_phase_upload_folders",
+            AsyncMock(return_value=None),
         )
 
-        await upload_artifact_to_media_library("tenant", "site", "Research", b"bytes", "tok")
-
-        assert "api/stream/agents" not in captured["url"]
-        assert "/media/upload" not in captured["url"]
-
-    async def test_default_base_url_is_ai_agent_api(self, monkeypatch):
-        """Without SITECORE_AGENTS_API_BASE_URL set, default must be the REST Agent API."""
+    async def test_graphql_mutation_targets_cm_host(self, monkeypatch):
         from app.services.content_workflow_service import upload_artifact_to_media_library
 
-        monkeypatch.delenv("SITECORE_AGENTS_API_BASE_URL", raising=False)
-
-        FakeClient, captured = self._make_fake_client(201)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
-
-        await upload_artifact_to_media_library("tenant", "site", "Research", b"bytes", "tok")
-
-        assert "stream/ai-agent-api" in captured["url"]
-
-    async def test_upload_request_is_valid_json_string(self, monkeypatch):
-        """upload_request field must be a JSON-encoded string, not separate form fields."""
-        from app.services.content_workflow_service import upload_artifact_to_media_library
-
-        FakeClient, captured = self._make_fake_client(201)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
-
-        monkeypatch.delenv("SITECORE_PUBLIC_DEFAULT_SITE_NAME", raising=False)
-
-        await upload_artifact_to_media_library("my-tenant", "my-site", "Research", b"bytes", "tok")
-
-        files = captured["files"]
-        assert "upload_request" in files, "upload_request field missing from multipart body"
-        # upload_request is sent as (None, json_string) — a filename-less multipart part
-        parsed = json.loads(files["upload_request"][1])
-        assert parsed["name"] == "research-brief"  # extension stripped — item name only
-        assert parsed["extension"] == "docx"
-        assert parsed["language"] == "en"
-        assert parsed["siteName"] == "my-site"  # falls back to site param when env not set
-        assert "my-tenant" in parsed["itemPath"]
-        assert "Research" in parsed["itemPath"]
-
-    async def test_sitename_uses_env_var_over_site_param(self, monkeypatch):
-        """SITECORE_PUBLIC_DEFAULT_SITE_NAME takes priority over the tool's site parameter."""
-        from app.services.content_workflow_service import upload_artifact_to_media_library
-
-        monkeypatch.setenv("SITECORE_PUBLIC_DEFAULT_SITE_NAME", "real-site-name")
-        FakeClient, captured = self._make_fake_client(201)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
-
-        await upload_artifact_to_media_library("t", "stub-site-id", "Research", b"bytes", "tok")
-
-        parsed = json.loads(captured["files"]["upload_request"][1])
-        assert parsed["siteName"] == "real-site-name"  # env var wins
-
-    async def test_upload_request_does_not_use_old_field_names(self, monkeypatch):
-        """Regression: old code sent mediaPath/itemName/overwrite — not accepted by the API."""
-        from app.services.content_workflow_service import upload_artifact_to_media_library
-
-        FakeClient, captured = self._make_fake_client(201)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
 
         await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
 
-        files = captured["files"]
-        assert "upload_request" in files
-        upload_req = json.loads(files["upload_request"][1])
-        assert "mediaPath" not in upload_req
-        assert "itemName" not in upload_req
-        assert "overwrite" not in upload_req
+        assert captured[0]["url"] == "https://cm.example.com/sitecore/api/authoring/graphql/v1"
 
-    async def test_file_field_has_docx_content_type(self, monkeypatch):
+    async def test_graphql_mutation_uses_full_media_path(self, monkeypatch):
+        from app.services.content_workflow_service import upload_artifact_to_media_library, build_artifact_media_path
+
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
+
+        await upload_artifact_to_media_library("my-tenant", "my-site", "Research", b"bytes", "tok")
+
+        # itemPath must be relative to media library root: no slash prefix, no
+        # obsolete "sitecore/Media Library" segment, and no file extension
+        # (dots are invalid in item names on this instance).
+        item_path = captured[0]["json"]["variables"]["itemPath"]
+        assert not item_path.startswith("/")
+        assert not item_path.lower().startswith("sitecore")
+        assert "." not in item_path.split("/")[-1], "item name must not contain extension"
+        assert "my-tenant" in item_path
+        assert "my-site" in item_path
+        assert "research-brief" in item_path
+        query = captured[0]["json"]["query"]
+        assert "includeExtensionInItemName" not in query
+
+    async def test_graphql_mutation_sets_overwrite_existing(self, monkeypatch):
         from app.services.content_workflow_service import upload_artifact_to_media_library
 
-        FakeClient, captured = self._make_fake_client(201)
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
+
+        await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
+
+        query = captured[0]["json"]["query"]
+        assert "overwriteExisting: true" in query
+
+    async def test_existing_artifact_is_overwritten(self, monkeypatch):
+        """When an artifact already exists, upload succeeds and result reports overwrite=True."""
+        from app.services.content_workflow_service import upload_artifact_to_media_library
+
+        FakeClient, captured = self._make_fake_client()
+        monkeypatch.setenv("SITECORE_CM_HOST", "https://cm.example.com")
         monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
         monkeypatch.setattr(
             "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
+            AsyncMock(return_value={"exists": True, "modified_at": "2026-01-01T00:00:00+00:00", "age_days": 5}),
+        )
+        monkeypatch.setattr(
+            "app.services.content_workflow_service.ensure_phase_upload_folders",
+            AsyncMock(return_value=None),
         )
 
-        await upload_artifact_to_media_library("t", "s", "Research", b"docx-content", "tok")
+        result = await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
 
-        files = captured["files"]
-        assert "file" in files
-        _filename, content, content_type = files["file"]
-        assert content == b"docx-content"
-        assert "wordprocessingml" in content_type
+        assert result["success"] is True
+        assert result["overwrite"] is True
+        query = captured[0]["json"]["query"]
+        assert "overwriteExisting: true" in query
 
-    async def test_auth_bearer_token_in_header(self, monkeypatch):
+    async def test_graphql_request_sends_auth_token(self, monkeypatch):
         from app.services.content_workflow_service import upload_artifact_to_media_library
 
-        FakeClient, captured = self._make_fake_client(201)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
 
         await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "my-token")
 
-        assert captured["headers"].get("Authorization") == "Bearer my-token"
+        assert captured[0]["headers"].get("Authorization") == "Bearer my-token"
 
-    async def test_known_api_bug_400_returns_user_friendly_error(self, monkeypatch):
-        """HTTP 400 'upload_request Field required' → docx_generated/upload_unavailable flags."""
+    async def test_file_uploaded_to_presigned_url(self, monkeypatch):
         from app.services.content_workflow_service import upload_artifact_to_media_library
 
-        known_bug_body = '{"errors":{"(\'body\', \'upload_request\')":"Field required"}}'
-        FakeClient, _captured = self._make_fake_client(400, resp_text=known_bug_body)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
+
+        await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
+
+        assert captured[1]["url"] == _PRESIGNED_URL
+
+    async def test_presigned_upload_sends_auth_header(self, monkeypatch):
+        """This instance routes presigned URLs through its own CM host, so the Bearer token is required."""
+        from app.services.content_workflow_service import upload_artifact_to_media_library
+
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
+
+        await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
+
+        assert captured[1]["headers"].get("Authorization") == "Bearer tok"
+
+    async def test_presigned_upload_file_has_docx_content_type(self, monkeypatch):
+        from app.services.content_workflow_service import upload_artifact_to_media_library
+
+        FakeClient, captured = self._make_fake_client()
+        self._common_patches(monkeypatch, FakeClient)
+
+        await upload_artifact_to_media_library("t", "s", "Research", b"docx-content", "tok")
+
+        _filename, content, content_type = captured[1]["files"]["file"]
+        assert content == b"docx-content"
+        assert "wordprocessingml" in content_type
+
+    async def test_graphql_http_error_returns_failure(self, monkeypatch):
+        from app.services.content_workflow_service import upload_artifact_to_media_library
+
+        FakeClient, _ = self._make_fake_client(responses=[(503, "unavailable")])
+        self._common_patches(monkeypatch, FakeClient)
 
         result = await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
 
         assert result["success"] is False
-        assert result.get("docx_generated") is True
-        assert result.get("upload_unavailable") is True
-        assert "upload API unavailable" in result["error"]
-        # Raw API error must not be surfaced to the user
-        assert "Field required" not in result["error"]
-        assert "400" not in result["error"]
+        assert "503" in result["error"]
 
-    async def test_http_error_returns_failure_with_status(self, monkeypatch):
+    async def test_graphql_error_field_returns_failure(self, monkeypatch):
         from app.services.content_workflow_service import upload_artifact_to_media_library
 
-        FakeClient, _captured = self._make_fake_client(404)
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
+        gql_error = {"data": None, "errors": [{"message": "Unauthorized"}]}
+        FakeClient, _ = self._make_fake_client(responses=[(200, gql_error)])
+        self._common_patches(monkeypatch, FakeClient)
 
         result = await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
 
         assert result["success"] is False
-        assert "404" in result["error"]
+        assert "Unauthorized" in result["error"]
+
+    async def test_presigned_upload_failure_returns_failure(self, monkeypatch):
+        from app.services.content_workflow_service import upload_artifact_to_media_library
+
+        FakeClient, _ = self._make_fake_client(responses=[
+            (200, _PRESIGNED_RESPONSE),
+            (400, "bad request"),
+        ])
+        self._common_patches(monkeypatch, FakeClient)
+
+        result = await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
+
+        assert result["success"] is False
+        assert "400" in result["error"]
 
     async def test_timeout_returns_failure(self, monkeypatch):
         import httpx as _httpx
         from app.services.content_workflow_service import upload_artifact_to_media_library
 
-        FakeClient, _captured = self._make_fake_client(raise_exc=_httpx.TimeoutException("timeout"))
-        monkeypatch.setattr("app.services.content_workflow_service.httpx.AsyncClient", FakeClient)
-        monkeypatch.setattr(
-            "app.services.content_workflow_service.check_media_artifact_exists",
-            AsyncMock(return_value={"exists": False, "modified_at": None, "age_days": None}),
-        )
+        FakeClient, _ = self._make_fake_client(raise_exc=_httpx.TimeoutException("timeout"))
+        self._common_patches(monkeypatch, FakeClient)
 
         result = await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
 
         assert result["success"] is False
         assert "timed out" in result["error"].lower()
+
+    async def test_cm_host_not_configured_returns_failure(self, monkeypatch):
+        from app.services.content_workflow_service import upload_artifact_to_media_library
+
+        monkeypatch.delenv("SITECORE_CM_HOST", raising=False)
+
+        result = await upload_artifact_to_media_library("t", "s", "Research", b"bytes", "tok")
+
+        assert result["success"] is False
+        assert "SITECORE_CM_HOST" in result["error"]
 
     async def test_unknown_phase_returns_failure(self, monkeypatch):
         from app.services.content_workflow_service import upload_artifact_to_media_library
@@ -572,7 +580,7 @@ class TestGetPhaseArtifactContent:
         )
 
         result = await get_phase_artifact_content.ainvoke(
-            {"tenant": "t", "site": "s", "phase": "Content"}
+            {"tenant": "t", "site": "s", "phase": "Brief"}
         )
         assert result["success"] is False
         assert result["text_content"] is None
@@ -586,6 +594,44 @@ class TestGetPhaseArtifactContent:
         )
         assert result["success"] is False
         assert "Unknown phase" in result["error"]
+
+
+class TestMediaItemPath:
+    def _strip(self, path):
+        from app.services.content_workflow_service import _media_item_path
+        return _media_item_path(path)
+
+    def test_strips_slash_prefix_and_extension(self):
+        result = self._strip("/sitecore/Media Library/Project/t/s/Content Strategy/Research/research-brief.docx")
+        assert result == "Project/t/s/Content Strategy/Research/research-brief"
+
+    def test_strips_prefix_without_leading_slash(self):
+        result = self._strip("sitecore/Media Library/Project/t/s/research-brief.docx")
+        assert result == "Project/t/s/research-brief"
+
+    def test_case_insensitive_prefix_strip(self):
+        result = self._strip("/sitecore/media library/Project/t/s/file.docx")
+        assert result == "Project/t/s/file"
+
+    def test_strips_extension_from_item_name(self):
+        result = self._strip("Project/t/s/content-strategy.docx")
+        assert result == "Project/t/s/content-strategy"
+
+    def test_path_already_relative_no_extension_unchanged(self):
+        result = self._strip("Project/t/s/file")
+        assert result == "Project/t/s/file"
+
+    def test_result_never_starts_with_slash(self):
+        result = self._strip("/sitecore/Media Library/Project/t/s/f.docx")
+        assert not result.startswith("/")
+
+    def test_result_never_starts_with_sitecore(self):
+        result = self._strip("/sitecore/Media Library/Project/t/s/f.docx")
+        assert not result.lower().startswith("sitecore")
+
+    def test_result_never_has_extension(self):
+        result = self._strip("/sitecore/Media Library/Project/t/s/research-brief.docx")
+        assert "." not in result.split("/")[-1]
 
 
 class TestParseMarkdownSections:

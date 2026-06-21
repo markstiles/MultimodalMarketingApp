@@ -18,3 +18,4 @@ langchain-mcp-adapters
 pytest
 pytest-asyncio
 python-docx
+tavily-python
