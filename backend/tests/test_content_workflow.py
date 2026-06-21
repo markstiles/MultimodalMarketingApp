@@ -309,6 +309,10 @@ class TestUploadArtifactToMediaLibrary:
 
 # ── @tool wrapper tests (mock upload_artifact_to_media_library entirely) ──────
 
+def _fake_site_info_ok(site_id, auth_token):
+    return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+
 class TestScanContentProjectStatus:
     async def test_all_not_started(self, monkeypatch):
         from app.clients.content_workflow import scan_content_project_status
@@ -316,19 +320,23 @@ class TestScanContentProjectStatus:
         async def _fake_token():
             return "tok"
 
-        async def _fake_check(tenant, site, phase, auth_token):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        async def _fake_check(collection, site_name, phase, auth_token):
             return {"exists": False, "modified_at": None, "age_days": None}
 
         monkeypatch.setattr(
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.check_media_artifact_exists", _fake_check
         )
 
-        result = await scan_content_project_status.ainvoke(
-            {"tenant": "t", "site": "s"}
-        )
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         assert result["next_recommended_phase"] == "Research"
         assert result["last_completed_phase"] is None
         assert result["has_stale_phases"] is False
@@ -340,7 +348,10 @@ class TestScanContentProjectStatus:
         async def _fake_token():
             return "tok"
 
-        async def _fake_check(tenant, site, phase, auth_token):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        async def _fake_check(collection, site_name, phase, auth_token):
             if phase == "Research":
                 return {"exists": True, "modified_at": "2026-01-01T00:00:00+00:00", "age_days": 30}
             return {"exists": False, "modified_at": None, "age_days": None}
@@ -349,12 +360,13 @@ class TestScanContentProjectStatus:
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.check_media_artifact_exists", _fake_check
         )
 
-        result = await scan_content_project_status.ainvoke(
-            {"tenant": "t", "site": "s"}
-        )
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         research = next(p for p in result["phases"] if p["phase"] == "Research")
         assert research["status"] == "complete"
         assert result["next_recommended_phase"] == "Strategy"
@@ -366,7 +378,10 @@ class TestScanContentProjectStatus:
         async def _fake_token():
             return "tok"
 
-        async def _fake_check(tenant, site, phase, auth_token):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        async def _fake_check(collection, site_name, phase, auth_token):
             if phase == "Research":
                 return {"exists": True, "modified_at": "2024-01-01T00:00:00+00:00", "age_days": 400}
             return {"exists": False, "modified_at": None, "age_days": None}
@@ -375,12 +390,13 @@ class TestScanContentProjectStatus:
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.check_media_artifact_exists", _fake_check
         )
 
-        result = await scan_content_project_status.ainvoke(
-            {"tenant": "t", "site": "s"}
-        )
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         research = next(p for p in result["phases"] if p["phase"] == "Research")
         assert research["status"] == "stale"
         assert result["has_stale_phases"] is True
@@ -396,9 +412,7 @@ class TestScanContentProjectStatus:
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fail_token
         )
 
-        result = await scan_content_project_status.ainvoke(
-            {"tenant": "t", "site": "s"}
-        )
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         assert result["success"] is False
         assert "Missing credentials" in result["error"]
         assert result["phases"] == []
@@ -411,19 +425,25 @@ class TestSavePhaseArtifact:
         async def _fake_token():
             return "tok"
 
-        def _fake_docx(phase, title, tenant, site, sections):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        def _fake_docx(phase, title, collection, site_name, sections):
             return b"docx-bytes"
 
-        async def _fake_upload(tenant, site, phase, docx_bytes, auth_token):
+        async def _fake_upload(collection, site_name, phase, docx_bytes, auth_token):
             return {
                 "success": True,
-                "media_path": f"/sitecore/Media Library/Project/{tenant}/{site}/Content Strategy/{phase}/research-brief.docx",
+                "media_path": f"/sitecore/Media Library/Project/{collection}/{site_name}/Content Strategy/research-brief",
                 "overwrite": False,
                 "error": None,
             }
 
         monkeypatch.setattr(
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
+        )
+        monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
         )
         monkeypatch.setattr(
             "app.clients.content_workflow.generate_phase_docx", _fake_docx
@@ -434,8 +454,7 @@ class TestSavePhaseArtifact:
 
         result = await save_phase_artifact.ainvoke(
             {
-                "tenant": "t",
-                "site": "s",
+                "site_id": "stub-id",
                 "phase": "Research",
                 "title": "Research Brief",
                 "content": "## Summary\nContent",
@@ -452,8 +471,7 @@ class TestSavePhaseArtifact:
 
         result = await save_phase_artifact.ainvoke(
             {
-                "tenant": "t",
-                "site": "s",
+                "site_id": "stub-id",
                 "phase": "Publish",
                 "title": "Bad Phase",
                 "content": "",
@@ -469,10 +487,13 @@ class TestSavePhaseArtifact:
         async def _fake_token():
             return "tok"
 
-        def _fake_docx(phase, title, tenant, site, sections):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        def _fake_docx(phase, title, collection, site_name, sections):
             return b"bytes"
 
-        async def _fake_upload(tenant, site, phase, docx_bytes, auth_token):
+        async def _fake_upload(collection, site_name, phase, docx_bytes, auth_token):
             return {
                 "success": False,
                 "media_path": "/some/path",
@@ -484,6 +505,9 @@ class TestSavePhaseArtifact:
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.generate_phase_docx", _fake_docx
         )
         monkeypatch.setattr(
@@ -492,8 +516,7 @@ class TestSavePhaseArtifact:
 
         result = await save_phase_artifact.ainvoke(
             {
-                "tenant": "t",
-                "site": "s",
+                "site_id": "stub-id",
                 "phase": "Strategy",
                 "title": "Strategy",
                 "content": "",
@@ -510,7 +533,10 @@ class TestGetPhaseArtifactContent:
         async def _fake_token():
             return "tok"
 
-        async def _fake_check(tenant, site, phase, auth_token):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        async def _fake_check(collection, site_name, phase, auth_token):
             return {"exists": True, "modified_at": "2026-06-01T00:00:00+00:00", "age_days": 18}
 
         async def _fake_extract(media_path, auth_token):
@@ -520,6 +546,9 @@ class TestGetPhaseArtifactContent:
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.check_media_artifact_exists", _fake_check
         )
         monkeypatch.setattr(
@@ -527,7 +556,7 @@ class TestGetPhaseArtifactContent:
         )
 
         result = await get_phase_artifact_content.ainvoke(
-            {"tenant": "t", "site": "s", "phase": "Research"}
+            {"site_id": "stub-id", "phase": "Research"}
         )
         assert result["success"] is True
         assert result["text_content"] == "Extracted text content"
@@ -540,18 +569,24 @@ class TestGetPhaseArtifactContent:
         async def _fake_token():
             return "tok"
 
-        async def _fake_check(tenant, site, phase, auth_token):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        async def _fake_check(collection, site_name, phase, auth_token):
             return {"exists": False, "modified_at": None, "age_days": None}
 
         monkeypatch.setattr(
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.check_media_artifact_exists", _fake_check
         )
 
         result = await get_phase_artifact_content.ainvoke(
-            {"tenant": "t", "site": "s", "phase": "Strategy"}
+            {"site_id": "stub-id", "phase": "Strategy"}
         )
         assert result["success"] is False
         assert result["text_content"] is None
@@ -563,7 +598,10 @@ class TestGetPhaseArtifactContent:
         async def _fake_token():
             return "tok"
 
-        async def _fake_check(tenant, site, phase, auth_token):
+        async def _fake_site_info(site_id, auth_token):
+            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+        async def _fake_check(collection, site_name, phase, auth_token):
             return {"exists": True, "modified_at": "2026-01-01T00:00:00+00:00", "age_days": 10}
 
         async def _fake_extract(media_path, auth_token):
@@ -573,6 +611,9 @@ class TestGetPhaseArtifactContent:
             "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
         )
         monkeypatch.setattr(
+            "app.clients.content_workflow.get_site_info", _fake_site_info
+        )
+        monkeypatch.setattr(
             "app.clients.content_workflow.check_media_artifact_exists", _fake_check
         )
         monkeypatch.setattr(
@@ -580,7 +621,7 @@ class TestGetPhaseArtifactContent:
         )
 
         result = await get_phase_artifact_content.ainvoke(
-            {"tenant": "t", "site": "s", "phase": "Brief"}
+            {"site_id": "stub-id", "phase": "Brief"}
         )
         assert result["success"] is False
         assert result["text_content"] is None
@@ -590,7 +631,7 @@ class TestGetPhaseArtifactContent:
         from app.clients.content_workflow import get_phase_artifact_content
 
         result = await get_phase_artifact_content.ainvoke(
-            {"tenant": "t", "site": "s", "phase": "Nonexistent"}
+            {"site_id": "stub-id", "phase": "Nonexistent"}
         )
         assert result["success"] is False
         assert "Unknown phase" in result["error"]

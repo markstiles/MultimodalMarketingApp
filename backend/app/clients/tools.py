@@ -13,6 +13,7 @@ from app.clients.content_workflow import (
     scan_content_project_status,
 )
 from app.clients.marketing_research import search_market_research
+from app.clients.sites import add_language_to_site, get_site_context, list_site_languages
 from app.clients.pages_api import (
     create_page,
     create_page_version,
@@ -39,6 +40,9 @@ def get_all_tools() -> list[BaseTool]:
         scan_content_project_status,
         save_phase_artifact,
         get_phase_artifact_content,
+        get_site_context,
+        list_site_languages,
+        add_language_to_site,
         search_market_research,
         list_org_brand_kits,
         get_brand_voice_summary,

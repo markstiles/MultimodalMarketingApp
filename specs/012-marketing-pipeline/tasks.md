@@ -124,9 +124,25 @@
 
 ---
 
-## Phase 10: Polish & Cross-Cutting Concerns
+## Phase 10: Sites API — Collection Resolution
 
-- [ ] T022 Run quickstart validation: start the local dev environment, trigger the marketing pipeline overlay, scan project status for a test site, save a Research Brief, retrieve it, and invoke `list_org_brand_kits` — confirm each step completes without errors (manual integration test against a live Sitecore instance)
+**Goal**: Content workflow tools resolve collection (tenant) automatically from the Sites API instead of requiring it as a parameter or env var
+
+- [X] T022 Create `backend/app/services/sites_service.py` with `get_site_info(site_id, auth_token)` — hits `GET xmapps-api.sitecorecloud.io/api/v1/sites/{site_id}`, returns `{success, id, name, collection}` with module-level process cache and `SITECORE_SITES_API_BASE_URL` env var override
+- [X] T023 Create `backend/app/clients/sites.py` with `get_site_context` `@tool` — exposes Sites API lookup to the LLM for general site hierarchy queries
+- [X] T024 Refactor `scan_content_project_status`, `save_phase_artifact`, `get_phase_artifact_content` to accept `site_id` only — call `get_site_info` internally to resolve collection + site_name in backend/app/clients/content_workflow.py
+- [X] T025 Rename `tenant`/`site` parameters to `collection`/`site_name` in all service-layer functions in backend/app/services/content_workflow_service.py
+- [X] T026 Register `get_site_context` in `get_all_tools()` in backend/app/clients/tools.py
+- [X] T027 Revert `SITECORE_TENANT` injection from `chat_service.py`; replace with `SITECORE_SITES_API_BASE_URL` comment in `.env.example`
+- [X] T028 Update test suite — add `get_site_info` mocks and update `ainvoke` arg shapes for all three content workflow tool tests in backend/tests/test_content_workflow.py
+
+**Checkpoint**: All 42 tests pass; content workflow tools no longer require tenant/collection to be supplied by the LLM
+
+---
+
+## Phase 11: Polish & Cross-Cutting Concerns
+
+- [ ] T029 Run quickstart validation: start the local dev environment, trigger the marketing pipeline overlay, scan project status for a test site, save a Research Brief, retrieve it, and invoke `list_org_brand_kits` — confirm each step completes without errors (manual integration test against a live Sitecore instance)
 
 ---
 

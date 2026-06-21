@@ -99,6 +99,7 @@ async def stream_chat(
         # Build message list for LangGraph
         system_prompt = load_instructions(task_name)
         ctx = request.context
+
         user_lines = []
         if ctx.user_name:
             user_lines.append(f"You are helping **{ctx.user_name}**")
@@ -107,6 +108,7 @@ async def stream_chat(
             user_lines.append(f"on site `{ctx.site_id}`, page `{ctx.page_id}`, language `{ctx.language}`.")
         else:
             user_lines.append(f"Current context: site `{ctx.site_id}`, page `{ctx.page_id}`, language `{ctx.language}`.")
+
         system_prompt += "\n\n## Session Context\n\n" + " ".join(user_lines)
         lc_messages = [SystemMessage(content=system_prompt)]
 

@@ -29,7 +29,7 @@ STALENESS_DAYS = 365
 FOLDER_TEMPLATE_ID = "FE5DD826-48C6-436D-B87A-7C4210C7413B"
 
 
-def build_artifact_media_path(tenant: str, site: str, phase: str) -> str:
+def build_artifact_media_path(collection: str, site_name: str, phase: str) -> str:
     info = PHASE_ARTIFACT_MAP.get(phase)
     if not info:
         raise ValueError(f"Unknown phase: {phase!r}")
@@ -39,7 +39,7 @@ def build_artifact_media_path(tenant: str, site: str, phase: str) -> str:
     filename = info["filename"]
     item_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     return (
-        f"/sitecore/Media Library/Project/{tenant}/{site}"
+        f"/sitecore/Media Library/Project/{collection}/{site_name}"
         f"/{CONTENT_STRATEGY_FOLDER}/{item_name}"
     )
 
@@ -53,9 +53,9 @@ get_sitecore_media_auth_token = get_sitecore_automation_token
 # ── Media library existence check ────────────────────────────────────────────
 
 async def check_media_artifact_exists(
-    tenant: str, site: str, phase: str, auth_token: str
+    collection: str, site_name: str, phase: str, auth_token: str
 ) -> dict:
-    media_path = build_artifact_media_path(tenant, site, phase)
+    media_path = build_artifact_media_path(collection, site_name, phase)
     cm_host = os.environ.get("SITECORE_CM_HOST", "").rstrip("/")
     if not cm_host:
         logger.warning("SITECORE_CM_HOST not set — treating all phases as not_started")
@@ -103,8 +103,8 @@ async def check_media_artifact_exists(
 def generate_phase_docx(
     phase: str,
     title: str,
-    tenant: str,
-    site: str,
+    collection: str,
+    site_name: str,
     sections: list[dict],
 ) -> bytes:
     doc = Document()
@@ -113,7 +113,7 @@ def generate_phase_docx(
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     meta = doc.add_paragraph()
     meta.add_run(
-        f"Phase: {phase}  |  Site: {tenant} / {site}  |  Generated: {now_str}"
+        f"Phase: {phase}  |  Site: {collection} / {site_name}  |  Generated: {now_str}"
     ).italic = True
     doc.add_paragraph()
 
@@ -216,7 +216,7 @@ mutation CreateMediaFolder($name: String!, $parent: ID!) {{
 
 
 async def ensure_phase_upload_folders(
-    tenant: str, site: str, phase: str, auth_token: str
+    collection: str, site_name: str, phase: str, auth_token: str
 ) -> None:
     """Ensure the Content Strategy folder exists in the media library.
 
@@ -231,7 +231,7 @@ async def ensure_phase_upload_folders(
     if phase not in PHASE_ARTIFACT_MAP:
         return
 
-    site_path = f"/sitecore/Media Library/Project/{tenant}/{site}"
+    site_path = f"/sitecore/Media Library/Project/{collection}/{site_name}"
     cs_path = f"{site_path}/{CONTENT_STRATEGY_FOLDER}"
 
     if not await _ssc_item_exists(cm_host, cs_path, auth_token):
@@ -269,8 +269,8 @@ def _media_item_path(full_path: str) -> str:
 
 
 async def upload_artifact_to_media_library(
-    tenant: str,
-    site: str,
+    collection: str,
+    site_name: str,
     phase: str,
     docx_bytes: bytes,
     auth_token: str,
@@ -279,7 +279,7 @@ async def upload_artifact_to_media_library(
     if not info:
         return {"success": False, "error": f"Unknown phase: {phase!r}", "media_path": None, "overwrite": False}
 
-    media_path = build_artifact_media_path(tenant, site, phase)
+    media_path = build_artifact_media_path(collection, site_name, phase)
     cm_host = os.environ.get("SITECORE_CM_HOST", "").rstrip("/")
     if not cm_host:
         return {"success": False, "error": "SITECORE_CM_HOST not configured", "media_path": media_path, "overwrite": False}
@@ -288,13 +288,13 @@ async def upload_artifact_to_media_library(
 
     overwrite = False
     try:
-        check = await check_media_artifact_exists(tenant, site, phase, auth_token)
+        check = await check_media_artifact_exists(collection, site_name, phase, auth_token)
         overwrite = check["exists"]
     except Exception:
         pass
 
     try:
-        await ensure_phase_upload_folders(tenant, site, phase, auth_token)
+        await ensure_phase_upload_folders(collection, site_name, phase, auth_token)
     except Exception as exc:
         logger.warning("Folder pre-creation failed (upload may still succeed): %s", exc)
 

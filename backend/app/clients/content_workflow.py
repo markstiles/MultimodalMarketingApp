@@ -16,6 +16,7 @@ from app.services.content_workflow_service import (
     get_sitecore_media_auth_token,
     upload_artifact_to_media_library,
 )
+from app.services.sites_service import get_site_info
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +84,18 @@ def _parse_markdown_sections(text: str) -> list[dict]:
 
 
 @tool
-async def scan_content_project_status(tenant: str, site: str) -> dict:
+async def scan_content_project_status(site_id: str) -> dict:
     """
     Scan all five marketing pipeline phase folders in the Sitecore media library and
     return the current project state for the given site. Call this at the start of
     every marketing pipeline session to detect existing artifacts and determine the
     next recommended phase.
 
+    The site's collection (organization grouping) is resolved automatically from the
+    Sites API — you only need to pass the site_id from session context.
+
     Args:
-        tenant: Tenant name from active session context (e.g. "acme-corp")
-        site: Site name from active session context (e.g. "us-site")
+        site_id: Site identifier from active session context
 
     Returns MarketingProjectSummary including phase statuses, staleness flags, and
     the recommended next phase. Phases: Research, Strategy, BrandVoice, Brief, Campaign.
@@ -102,9 +105,20 @@ async def scan_content_project_status(tenant: str, site: str) -> dict:
     except RuntimeError as exc:
         return {"success": False, "error": str(exc), "phases": []}
 
+    site_info = await get_site_info(site_id, auth_token)
+    if not site_info.get("success"):
+        return {
+            "success": False,
+            "error": site_info.get("error", "Failed to resolve site context"),
+            "phases": [],
+        }
+
+    collection = site_info["collection"]
+    site_name = site_info["name"]
+
     checks = await asyncio.gather(
         *[
-            check_media_artifact_exists(tenant, site, phase, auth_token)
+            check_media_artifact_exists(collection, site_name, phase, auth_token)
             for phase in PHASES_ORDERED
         ],
         return_exceptions=True,
@@ -117,7 +131,7 @@ async def scan_content_project_status(tenant: str, site: str) -> dict:
 
     for phase, result in zip(PHASES_ORDERED, checks):
         info = PHASE_ARTIFACT_MAP[phase]
-        media_path = build_artifact_media_path(tenant, site, phase)
+        media_path = build_artifact_media_path(collection, site_name, phase)
 
         if isinstance(result, Exception):
             logger.warning("Phase %s check failed: %s", phase, result)
@@ -153,8 +167,9 @@ async def scan_content_project_status(tenant: str, site: str) -> dict:
         )
 
     return {
-        "tenant": tenant,
-        "site": site,
+        "site_id": site_id,
+        "collection": collection,
+        "site_name": site_name,
         "phases": phases,
         "last_completed_phase": last_completed_phase,
         "next_recommended_phase": next_recommended_phase,
@@ -165,8 +180,7 @@ async def scan_content_project_status(tenant: str, site: str) -> dict:
 
 @tool
 async def save_phase_artifact(
-    tenant: str,
-    site: str,
+    site_id: str,
     phase: str,
     title: str,
     content: str,
@@ -178,9 +192,10 @@ async def save_phase_artifact(
     Pass the full document body as markdown — sections (##), subsections (###),
     and body text are converted to a Word document automatically.
 
+    The site's collection is resolved automatically — you only need site_id.
+
     Args:
-        tenant: Tenant name from active session context
-        site: Site name from active session context
+        site_id: Site identifier from active session context
         phase: One of: Research, Strategy, BrandVoice, Brief, Campaign
         title: Document title (e.g. "Research Brief — Acme Corp / US Site")
         content: Full document body as markdown
@@ -199,12 +214,37 @@ async def save_phase_artifact(
             "overwrite": False,
         }
 
+    try:
+        auth_token = await get_sitecore_media_auth_token()
+    except RuntimeError as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "phase": phase,
+            "media_path": None,
+            "filename": PHASE_ARTIFACT_MAP[phase]["filename"],
+            "overwrite": False,
+        }
+
+    site_info = await get_site_info(site_id, auth_token)
+    if not site_info.get("success"):
+        return {
+            "success": False,
+            "error": site_info.get("error", "Failed to resolve site context"),
+            "phase": phase,
+            "media_path": None,
+            "filename": PHASE_ARTIFACT_MAP[phase]["filename"],
+            "overwrite": False,
+        }
+
+    collection = site_info["collection"]
+    site_name = site_info["name"]
     info = PHASE_ARTIFACT_MAP[phase]
-    media_path = build_artifact_media_path(tenant, site, phase)
+    media_path = build_artifact_media_path(collection, site_name, phase)
 
     sections = _parse_markdown_sections(content)
     try:
-        docx_bytes = generate_phase_docx(phase, title, tenant, site, sections)
+        docx_bytes = generate_phase_docx(phase, title, collection, site_name, sections)
     except Exception as exc:
         logger.error("Failed to generate .docx for phase %s: %s", phase, exc)
         return {
@@ -216,20 +256,8 @@ async def save_phase_artifact(
             "overwrite": False,
         }
 
-    try:
-        auth_token = await get_sitecore_media_auth_token()
-    except RuntimeError as exc:
-        return {
-            "success": False,
-            "error": str(exc),
-            "phase": phase,
-            "media_path": media_path,
-            "filename": info["filename"],
-            "overwrite": False,
-        }
-
     result = await upload_artifact_to_media_library(
-        tenant, site, phase, docx_bytes, auth_token
+        collection, site_name, phase, docx_bytes, auth_token
     )
     return {
         "success": result["success"],
@@ -242,16 +270,17 @@ async def save_phase_artifact(
 
 
 @tool
-async def get_phase_artifact_content(tenant: str, site: str, phase: str) -> dict:
+async def get_phase_artifact_content(site_id: str, phase: str) -> dict:
     """
     Retrieve the text content of an existing phase artifact from the Sitecore media
     library. Use this to inject prior phase findings into context at the start of
     downstream phases so the marketer does not need to re-enter information already
     captured.
 
+    The site's collection is resolved automatically — you only need site_id.
+
     Args:
-        tenant: Tenant name from active session context
-        site: Site name from active session context
+        site_id: Site identifier from active session context
         phase: One of: Research, Strategy, BrandVoice, Brief, Campaign
 
     Returns ArtifactContentResult with extracted text content and modification date.
@@ -267,21 +296,34 @@ async def get_phase_artifact_content(tenant: str, site: str, phase: str) -> dict
             "error": f"Unknown phase: {phase!r}. Must be one of: {valid}.",
         }
 
-    media_path = build_artifact_media_path(tenant, site, phase)
-
     try:
         auth_token = await get_sitecore_media_auth_token()
     except RuntimeError as exc:
         return {
             "success": False,
             "phase": phase,
-            "media_path": media_path,
+            "media_path": None,
             "text_content": None,
             "modified_at": None,
             "error": str(exc),
         }
 
-    check = await check_media_artifact_exists(tenant, site, phase, auth_token)
+    site_info = await get_site_info(site_id, auth_token)
+    if not site_info.get("success"):
+        return {
+            "success": False,
+            "phase": phase,
+            "media_path": None,
+            "text_content": None,
+            "modified_at": None,
+            "error": site_info.get("error", "Failed to resolve site context"),
+        }
+
+    collection = site_info["collection"]
+    site_name = site_info["name"]
+    media_path = build_artifact_media_path(collection, site_name, phase)
+
+    check = await check_media_artifact_exists(collection, site_name, phase, auth_token)
     if not check["exists"]:
         return {
             "success": False,
