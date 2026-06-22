@@ -32,16 +32,17 @@ async def search_pages(
     Use this to obtain a valid page_id before calling get_insert_options or create_page.
     NEVER invent a page_id — always use one returned by this tool.
 
-    How to get the first page_id when building a content tree:
-      1. Use the page_id from session context as root_page_id.
-      2. Call get_page_state on that page_id to find its parent_path and navigate
-         up to the home/root page if needed.
-      3. Then call search_pages from the home page to find sibling or child pages.
+    BOOTSTRAPPING the home page (required before any page creation):
+      - Pass root_page_id=<site_id from session context> and query="Home".
+      - This returns the site's home page entry whose page_id is the root parent
+        for all new pages.
+      - Do NOT use the session page_id as root_page_id — it may be a stub in
+        local development and will be rejected by the API.
 
     Args:
-        root_page_id: A page UUID to scope the search — use session page_id as the
-                      starting point; NEVER invent this value
-        query: Non-empty search term to match against page display names
+        root_page_id: site_id (from session context) to find the home page, or a
+                      page_id returned by a previous call to scope a sub-tree search
+        query: Non-empty search term — use "Home" to find the site home page
         language: Language code, e.g. "en"
     """
     try:

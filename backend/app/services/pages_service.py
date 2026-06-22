@@ -43,10 +43,22 @@ async def search_pages_api(
     auth_token: str,
 ) -> dict:
     base_url = _get_base_url()
+    if not query or not query.strip():
+        return {
+            "success": False,
+            "pages": [],
+            "total_count": 0,
+            "has_more": False,
+            "error": (
+                "searchText is required and cannot be empty. "
+                "To find the site home page, pass root_page_id=site_id and query='Home'."
+            ),
+        }
+
     # rootIds is an array param; httpx repeats the key for each list entry.
     params: list[tuple[str, str]] = [
         ("rootIds", root_page_id),
-        ("searchText", query),
+        ("searchText", query.strip()),
     ]
     if language:
         params.append(("language", language))
