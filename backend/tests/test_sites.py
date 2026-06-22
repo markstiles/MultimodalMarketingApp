@@ -321,3 +321,204 @@ class TestAddLanguageToSiteTool:
         result = await add_language_to_site.ainvoke({"site_id": "stub-id", "language": "de-DE"})
         assert result["success"] is False
         assert "Missing credentials" in result["error"]
+
+
+# ── list_sites (service) ──────────────────────────────────────────────────────
+
+class TestListSites:
+    async def test_success_list(self):
+        from app.services.sites_service import list_sites
+
+        body = [
+            {"id": "s1", "name": "acme-us", "collection": "acme-corp"},
+            {"id": "s2", "name": "acme-eu", "collection": "acme-corp"},
+        ]
+        mock = _mock_http(200, body)
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await list_sites("tok")
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert result["sites"][0]["name"] == "acme-us"
+        assert result["sites"][1]["collection"] == "acme-corp"
+
+    async def test_success_wrapped_data(self):
+        from app.services.sites_service import list_sites
+
+        body = {"data": [{"id": "s3", "name": "test-site", "collection": "test"}]}
+        mock = _mock_http(200, body)
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await list_sites("tok")
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["sites"][0]["id"] == "s3"
+
+    async def test_normalizes_nested_collection(self):
+        from app.services.sites_service import list_sites
+
+        body = [{"id": "s4", "name": "my-site", "siteCollection": {"name": "my-org"}}]
+        mock = _mock_http(200, body)
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await list_sites("tok")
+
+        assert result["sites"][0]["collection"] == "my-org"
+
+    async def test_timeout(self):
+        from app.services.sites_service import list_sites
+        import httpx
+
+        mock = _mock_http(200, [], raise_exc=httpx.TimeoutException("t/o"))
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await list_sites("tok")
+
+        assert result["success"] is False
+        assert "Timed out" in result["error"]
+
+
+# ── create_site (service) ─────────────────────────────────────────────────────
+
+class TestCreateSite:
+    async def test_success(self):
+        from app.services.sites_service import create_site
+
+        body = {"id": "new-site-id", "name": "test-site", "collection": "test"}
+        mock = _mock_http(201, body)
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await create_site("test-site", "test", "en", "tok")
+
+        assert result["success"] is True
+        assert result["id"] == "new-site-id"
+        assert result["name"] == "test-site"
+        assert result["collection"] == "test"
+
+    async def test_conflict_409(self):
+        from app.services.sites_service import create_site
+
+        mock = _mock_http(409, "conflict")
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await create_site("test-site", "test", "en", "tok")
+
+        assert result["success"] is False
+        assert "already exists" in result["error"]
+
+    async def test_normalizes_nested_collection(self):
+        from app.services.sites_service import create_site
+
+        body = {"id": "x", "name": "n", "siteCollection": {"name": "org-x"}}
+        mock = _mock_http(200, body)
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await create_site("n", "org-x", "en", "tok")
+
+        assert result["collection"] == "org-x"
+
+    async def test_timeout(self):
+        from app.services.sites_service import create_site
+        import httpx
+
+        mock = _mock_http(200, {}, raise_exc=httpx.TimeoutException("t/o"))
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            result = await create_site("x", "y", "en", "tok")
+
+        assert result["success"] is False
+        assert "Timed out" in result["error"]
+
+    async def test_new_site_cached(self):
+        from app.services import sites_service
+
+        body = {"id": "cached-id", "name": "c", "collection": "col"}
+        mock = _mock_http(200, body)
+        with patch("app.services.sites_service.httpx.AsyncClient", return_value=mock):
+            await sites_service.create_site("c", "col", "en", "tok")
+
+        assert "cached-id" in sites_service._site_cache
+
+
+# ── list_all_sites (tool) ─────────────────────────────────────────────────────
+
+class TestListAllSitesTool:
+    async def test_success(self, monkeypatch):
+        from app.clients.sites import list_all_sites
+
+        async def _fake_token():
+            return "tok"
+
+        async def _fake_list(auth_token):
+            return {
+                "success": True,
+                "sites": [{"id": "s1", "name": "site-a", "collection": "col-a"}],
+                "count": 1,
+            }
+
+        monkeypatch.setattr("app.clients.sites.get_sitecore_automation_token", _fake_token)
+        monkeypatch.setattr("app.clients.sites._svc_list_sites", _fake_list)
+
+        result = await list_all_sites.ainvoke({})
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["sites"][0]["name"] == "site-a"
+
+    async def test_auth_failure(self, monkeypatch):
+        from app.clients.sites import list_all_sites
+
+        async def _fail():
+            raise RuntimeError("no creds")
+
+        monkeypatch.setattr("app.clients.sites.get_sitecore_automation_token", _fail)
+        result = await list_all_sites.ainvoke({})
+        assert result["success"] is False
+        assert "no creds" in result["error"]
+
+
+# ── create_marketing_site (tool) ──────────────────────────────────────────────
+
+class TestCreateMarketingSiteTool:
+    async def test_success(self, monkeypatch):
+        from app.clients.sites import create_marketing_site
+
+        async def _fake_token():
+            return "tok"
+
+        async def _fake_create(name, collection, language, auth_token):
+            return {"success": True, "id": "new-id", "name": name, "collection": collection}
+
+        monkeypatch.setattr("app.clients.sites.get_sitecore_automation_token", _fake_token)
+        monkeypatch.setattr("app.clients.sites._svc_create_site", _fake_create)
+
+        result = await create_marketing_site.ainvoke(
+            {"name": "test-site", "collection": "test", "language": "en"}
+        )
+        assert result["success"] is True
+        assert result["id"] == "new-id"
+        assert result["collection"] == "test"
+
+    async def test_conflict_propagated(self, monkeypatch):
+        from app.clients.sites import create_marketing_site
+
+        async def _fake_token():
+            return "tok"
+
+        async def _fake_create(name, collection, language, auth_token):
+            return {"success": False, "error": f"Site {name!r} already exists in collection {collection!r}"}
+
+        monkeypatch.setattr("app.clients.sites.get_sitecore_automation_token", _fake_token)
+        monkeypatch.setattr("app.clients.sites._svc_create_site", _fake_create)
+
+        result = await create_marketing_site.ainvoke(
+            {"name": "dup-site", "collection": "test", "language": "en"}
+        )
+        assert result["success"] is False
+        assert "already exists" in result["error"]
+
+    async def test_auth_failure(self, monkeypatch):
+        from app.clients.sites import create_marketing_site
+
+        async def _fail():
+            raise RuntimeError("no auth")
+
+        monkeypatch.setattr("app.clients.sites.get_sitecore_automation_token", _fail)
+        result = await create_marketing_site.ainvoke(
+            {"name": "x", "collection": "y", "language": "en"}
+        )
+        assert result["success"] is False
+        assert "no auth" in result["error"]

@@ -19,3 +19,5 @@ pytest
 pytest-asyncio
 python-docx
 tavily-python
+pgvector
+cohere

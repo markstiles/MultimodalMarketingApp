@@ -140,9 +140,49 @@
 
 ---
 
-## Phase 11: Polish & Cross-Cutting Concerns
+## Phase 11: Sites API — Language Support
 
-- [ ] T029 Run quickstart validation: start the local dev environment, trigger the marketing pipeline overlay, scan project status for a test site, save a Research Brief, retrieve it, and invoke `list_org_brand_kits` — confirm each step completes without errors (manual integration test against a live Sitecore instance)
+- [X] T029 [P] Add `get_site_languages` and `add_site_language` to `backend/app/services/sites_service.py` — normalize 3 response shapes (bare strings, bare objects, `{"data":[...]}`) and handle 404/409
+- [X] T030 [P] Add `list_site_languages` and `add_language_to_site` `@tool` wrappers in `backend/app/clients/sites.py`
+- [X] T031 Register `list_site_languages` and `add_language_to_site` in `get_all_tools()` in `backend/app/clients/tools.py`
+- [X] T032 Add tests for language service + tools in `backend/tests/test_sites.py`
+
+**Checkpoint**: 63 tests pass; sites tools expose collection resolution + language management to the LLM
+
+---
+
+## Phase 12: Headless Conversation Runner
+
+- [X] T033 Create `backend/app/headless/__init__.py` (empty package marker)
+- [X] T034 Create `backend/app/headless/context.py` — `ProxyContext` dataclass + `load_proxy_context()` reading `HEADLESS_*` env vars with `LOCAL_*` fallback
+- [X] T035 Create `backend/app/headless/files.py` — `FileRegistry` for named local files; text files inline, binary files base64
+- [X] T036 Create `backend/app/headless/session.py` — `HeadlessSession` wrapping `stream_chat()` directly; parses SSE events, returns `TurnResult`
+- [X] T037 Create `backend/app/headless/driver.py` — `DriverLLM` that simulates a marketing professional; emits `[DONE]` signal, supports `[ATTACH: name]` markers
+- [X] T038 Create `backend/app/headless/runner.py` — `HeadlessRunner` orchestrating driver + session turn loop; processes file attachments; returns `RunResult`
+- [X] T039 Create `backend/scripts/headless_run.py` — CLI entry point with `--max-turns`, `--files`, `--output`, `--verbose`, `--log-level` flags
+- [X] T040 Add `HEADLESS_*` env vars to `.env.example` with documentation comments
+- [X] T041 Add unit tests for `context.py`, `files.py`, `runner._process_message()` in `backend/tests/test_headless.py` (21 tests, no network/DB required)
+
+**Checkpoint**: 84 tests pass; headless runner usable via `python -m scripts.headless_run "<scenario>"` against a live Sitecore environment
+
+---
+
+## Phase 13: Simulation Test Suite
+
+- [X] T042 Create `backend/tests/simulation/__init__.py` and `conftest.py` — `skip_without_sitecore` mark, `run_scenario` async fixture, `assert_scenario_passed` helper
+- [X] T043 Create `backend/tests/simulation/scenarios.py` — `SimScenario` dataclass + 8 scenario definitions covering all pipeline phases, entry points, and edge cases
+- [X] T044 Create `backend/tests/simulation/test_marketing_workflow.py` — 8 parametrized simulation tests, all skip cleanly without Sitecore env; `pytest.mark.simulation` gating
+- [X] T045 Update `backend/pytest.ini` — register `simulation` mark and `asyncio_mode = auto`
+- [X] T046 Update `backend/scripts/headless_run.py` — add `--scenario ID` and `--list-scenarios` flags backed by the scenario registry
+
+**Checkpoint**: 8 simulation tests skip cleanly in CI (no Sitecore env); run against live env with `pytest tests/simulation/ -m simulation -v` or `python -m scripts.headless_run --scenario <id> --verbose`
+
+---
+
+## Phase 14: Polish & Cross-Cutting Concerns
+
+- [ ] T047 Run quickstart validation: start the local dev environment, trigger the marketing pipeline overlay, scan project status for a test site, save a Research Brief, retrieve it, and invoke `list_org_brand_kits` — confirm each step completes without errors (manual integration test against a live Sitecore instance)
+- [ ] T048 Run at least 3 simulation scenarios (session-start, research-full, brief-entry) against a live Sitecore instance and verify all pass
 
 ---
 
@@ -210,6 +250,7 @@ Continue from MVP:
 ## Notes
 
 - [P] = different files, no blocking dependencies — can run concurrently
-- All tasks T001–T021 are complete as of 2026-06-21
-- T022 (quickstart validation) requires a live Sitecore instance with `SITECORE_ORGANIZATION_ID` set
+- All tasks T001–T046 are complete as of 2026-06-21
+- T042 (quickstart validation) requires a live Sitecore instance with `SITECORE_ORGANIZATION_ID` set
+- Headless runner (T033–T041) calls `stream_chat()` directly — no HTTP server required; needs `LLM_API_KEY` + `DATABASE_URL` + `HEADLESS_SITE_ID`
 - Constitution check: all new tools follow `@tool` in `clients/`; all phase guidance lives in `instructions/tasks/content-dev-workflow.md`; no prompts hardcoded in Python

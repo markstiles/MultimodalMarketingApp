@@ -4,8 +4,10 @@ from langchain_core.tools import tool
 
 from app.services.sites_service import (
     add_site_language as _svc_add_language,
+    create_site as _svc_create_site,
     get_site_info,
     get_site_languages as _svc_get_languages,
+    list_sites as _svc_list_sites,
 )
 from app.services.sitecore_auth import get_sitecore_automation_token
 
@@ -58,6 +60,56 @@ async def list_site_languages(site_id: str) -> dict:
         return {"success": False, "error": str(exc), "site_id": site_id}
 
     return await _svc_get_languages(site_id, auth_token)
+
+
+@tool
+async def list_all_sites() -> dict:
+    """
+    List all Sitecore XM Cloud sites accessible to the current organisation.
+
+    Use this to browse existing sites before creating a new one, or to find a
+    site's id when only the name is known. Each entry includes the site's id,
+    name, and collection (organisational grouping).
+
+    Returns a list of site objects with total count, or success=False on error.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    return await _svc_list_sites(auth_token)
+
+
+@tool
+async def create_marketing_site(name: str, collection: str, language: str = "en") -> dict:
+    """
+    Create a new Sitecore XM Cloud marketing site.
+
+    Use when setting up a campaign microsite, a test environment, or a new
+    regional site. Supplying a collection name that does not yet exist will
+    create a new collection (organisational grouping) automatically — this is
+    how you provision a brand-new tenant/collection.
+
+    Call list_all_sites first to confirm the target collection or site does not
+    already exist. Always confirm the site name and collection with the marketer
+    before calling this tool — site creation cannot be undone through the chat.
+
+    Args:
+        name:       URL-safe site name (e.g. "acme-q3-campaign-test")
+        collection: Collection/tenant name to create or place the site in
+                    (e.g. "acme-corp", "test")
+        language:   Primary language BCP 47 code for the site (default "en")
+
+    Returns the new site's id, name, and collection on success, or
+    success=False with a descriptive error (including 409 if the site exists).
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    return await _svc_create_site(name, collection, language, auth_token)
 
 
 @tool

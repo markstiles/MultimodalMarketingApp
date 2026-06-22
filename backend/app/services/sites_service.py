@@ -111,6 +111,91 @@ async def get_site_languages(site_id: str, auth_token: str) -> dict:
     }
 
 
+async def list_sites(auth_token: str) -> dict:
+    """Return all sites accessible to the current auth token.
+
+    Returns {success, sites, count} on success. Each site entry has at minimum
+    id, name, and collection fields (normalized from the raw API response).
+    """
+    base_url = _get_base_url()
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(base_url, headers=_auth_headers(auth_token))
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Timed out listing sites"}
+    except Exception as exc:
+        logger.warning("Failed to list sites: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    raw: list = data if isinstance(data, list) else data.get("data") or data.get("sites") or []
+    sites = []
+    for item in raw:
+        raw_collection = item.get("collection") or item.get("siteCollection") or {}
+        collection = (
+            raw_collection if isinstance(raw_collection, str)
+            else raw_collection.get("name", "")
+        )
+        sites.append({
+            "id": item.get("id", ""),
+            "name": item.get("name", ""),
+            "collection": collection,
+        })
+
+    return {"success": True, "sites": sites, "count": len(sites)}
+
+
+async def create_site(
+    name: str,
+    collection: str,
+    language: str,
+    auth_token: str,
+) -> dict:
+    """Create a new Sitecore XM Cloud site.
+
+    `collection` is the organizational grouping (also called tenant) the site
+    belongs to. Providing a collection name that does not yet exist will create
+    a new collection automatically.
+
+    Returns {success, id, name, collection} on success or {success, error} on failure.
+    A 409 means a site with that name already exists in the given collection.
+    """
+    base_url = _get_base_url()
+    payload = {"name": name, "collection": collection, "language": language}
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.post(base_url, json=payload, headers=_auth_headers(auth_token))
+        if resp.status_code == 409:
+            return {
+                "success": False,
+                "error": f"Site {name!r} already exists in collection {collection!r}",
+            }
+        resp.raise_for_status()
+        data = resp.json() if resp.content else {}
+    except httpx.TimeoutException:
+        return {"success": False, "error": f"Timed out creating site {name!r}"}
+    except Exception as exc:
+        logger.warning("Failed to create site %s: %s", name, exc)
+        return {"success": False, "error": str(exc)}
+
+    raw_collection = data.get("collection") or data.get("siteCollection") or {}
+    resolved_collection = (
+        raw_collection if isinstance(raw_collection, str)
+        else raw_collection.get("name", collection)
+    )
+
+    result = {
+        "success": True,
+        "id": data.get("id", ""),
+        "name": data.get("name", name),
+        "collection": resolved_collection,
+    }
+    if result["id"]:
+        _site_cache[result["id"]] = result
+    return result
+
+
 async def add_site_language(site_id: str, language: str, auth_token: str) -> dict:
     """Add a language/locale to a site.
 

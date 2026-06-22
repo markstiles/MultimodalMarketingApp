@@ -13,7 +13,13 @@ from app.clients.content_workflow import (
     scan_content_project_status,
 )
 from app.clients.marketing_research import search_market_research
-from app.clients.sites import add_language_to_site, get_site_context, list_site_languages
+from app.clients.sites import (
+    add_language_to_site,
+    create_marketing_site,
+    get_site_context,
+    list_all_sites,
+    list_site_languages,
+)
 from app.clients.pages_api import (
     create_page,
     create_page_version,
@@ -24,6 +30,10 @@ from app.clients.pages_api import (
     rename_page,
     search_pages,
     update_page_fields,
+)
+from app.clients.image_search import (
+    index_media_library_images,
+    search_site_images,
 )
 
 _mcp_tools: list[BaseTool] = []
@@ -41,6 +51,8 @@ def get_all_tools() -> list[BaseTool]:
         save_phase_artifact,
         get_phase_artifact_content,
         get_site_context,
+        list_all_sites,
+        create_marketing_site,
         list_site_languages,
         add_language_to_site,
         search_market_research,
@@ -58,4 +70,6 @@ def get_all_tools() -> list[BaseTool]:
         update_page_fields,
         create_page_version,
         delete_page,
+        search_site_images,
+        index_media_library_images,
     ]
