@@ -6,6 +6,25 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _normalize_id(value: str) -> str:
+    """Strip Sitecore-style curly braces from a GUID, e.g. {B0A6...} → b0a6..."""
+    return value.strip("{}").lower() if value else value
+
+
+_INVALID_NAME_CHARS = str.maketrans({
+    "/": "-", "\\": "-", ":": "-", "*": "",
+    "?": "", '"': "", "<": "", ">": "", "|": "",
+})
+
+
+def _sanitize_page_name(name: str) -> str:
+    """Replace characters Sitecore rejects in item names."""
+    cleaned = name.translate(_INVALID_NAME_CHARS).strip()
+    if cleaned != name:
+        logger.warning("create_page_api: sanitized page name %r → %r", name, cleaned)
+    return cleaned
+
+
 def _get_base_url() -> str:
     return os.environ.get(
         "SITECORE_PAGES_API_BASE_URL",
@@ -18,16 +37,19 @@ def _auth_headers(auth_token: str) -> dict[str, str]:
 
 
 async def search_pages_api(
-    site_id: str,
-    environment: str,
+    root_page_id: str,
     query: str,
     language: str,
     auth_token: str,
 ) -> dict:
     base_url = _get_base_url()
-    params: dict[str, str] = {"siteId": site_id, "search": query}
+    # rootIds is an array param; httpx repeats the key for each list entry.
+    params: list[tuple[str, str]] = [
+        ("rootIds", root_page_id),
+        ("searchText", query),
+    ]
     if language:
-        params["language"] = language
+        params.append(("language", language))
 
     try:
         async with httpx.AsyncClient(timeout=15) as http:
@@ -51,7 +73,7 @@ async def search_pages_api(
 
     pages = [
         {
-            "page_id": p.get("id", ""),
+            "page_id": _normalize_id(p.get("id", "")),
             "display_name": p.get("displayName", p.get("name", "")),
             "parent_path": p.get("parentPath", p.get("path", "")),
             "template_name": p.get("templateName", ""),
@@ -73,13 +95,22 @@ async def search_pages_api(
 
 async def get_insert_options_api(
     parent_page_id: str,
+    site_id: str,
+    language: str,
     auth_token: str,
+    insert_option_kind: str = "Page",
 ) -> dict:
     base_url = _get_base_url()
+    params = {
+        "site": site_id,
+        "language": language,
+        "insertOptionKind": insert_option_kind,
+    }
     try:
         async with httpx.AsyncClient(timeout=15) as http:
             resp = await http.get(
                 f"{base_url}/{parent_page_id}/insertoptions",
+                params=params,
                 headers=_auth_headers(auth_token),
             )
             resp.raise_for_status()
@@ -92,8 +123,13 @@ async def get_insert_options_api(
         return {"success": False, "insert_options": [], "error": str(exc)}
 
     raw = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    if raw and isinstance(raw, list):
+        logger.info("get_insert_options_api first item keys: %s, sample: %s", list(raw[0].keys()), raw[0])
     options = [
-        {"template_id": t.get("id", ""), "template_name": t.get("displayName", t.get("name", ""))}
+        {
+            "template_id": _normalize_id(t.get("id") or t.get("templateId") or ""),
+            "template_name": t.get("displayName") or t.get("name") or "",
+        }
         for t in (raw if isinstance(raw, list) else [])
     ]
     return {"success": True, "insert_options": options, "error": None}
@@ -147,18 +183,19 @@ async def create_page_api(
     base_url = _get_base_url()
     body = {
         "site": site_id,
-        "parent": parent_page_id,
-        "template": template_id,
-        "displayName": display_name,
+        "parentId": _normalize_id(parent_page_id),
+        "templateId": _normalize_id(template_id),
+        "pageName": _sanitize_page_name(display_name),
         "language": language,
     }
+    logger.debug("create_page_api body: %s", body)
     try:
         async with httpx.AsyncClient(timeout=20) as http:
             resp = await http.post(base_url, json=body, headers=_auth_headers(auth_token))
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        logger.error("create_page_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        logger.error("create_page_api HTTP %s (body=%s): %s", exc.response.status_code, body, exc.response.text)
         return {"success": False, "page_id": None, "display_name": None, "version": None, "error": str(exc)}
     except Exception as exc:
         logger.error("create_page_api error: %s", exc)
@@ -168,7 +205,7 @@ async def create_page_api(
     return {
         "success": True,
         "page_id": d.get("id", ""),
-        "display_name": d.get("displayName", display_name),
+        "display_name": d.get("displayName") or d.get("pageName") or display_name,
         "version": None,
         "error": None,
     }

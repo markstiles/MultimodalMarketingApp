@@ -20,28 +20,36 @@ logger = logging.getLogger(__name__)
 
 @tool
 async def search_pages(
-    site_id: str,
-    environment: str,
+    root_page_id: str,
     query: str,
     language: str,
 ) -> dict:
     """
-    Search for pages in the active site whose display name contains the query string.
-    Returns up to 20 matching pages with their location in the site hierarchy.
-    If has_more is True, ask the marketer to refine the search rather than paginating.
+    Search for pages whose display name contains the query string, scoped to the
+    subtree rooted at root_page_id. Returns up to 20 matches with page_id,
+    display_name, and parent_path. If has_more is True, refine the query.
+
+    Use this to obtain a valid page_id before calling get_insert_options or create_page.
+    NEVER invent a page_id — always use one returned by this tool.
+
+    How to get the first page_id when building a content tree:
+      1. Use the page_id from session context as root_page_id.
+      2. Call get_page_state on that page_id to find its parent_path and navigate
+         up to the home/root page if needed.
+      3. Then call search_pages from the home page to find sibling or child pages.
 
     Args:
-        site_id: Active site identifier from session context
-        environment: Active environment identifier from session context
-        query: Search term to match against page display names
-        language: Language code, e.g. "en" — use the site primary language if unknown
+        root_page_id: A page UUID to scope the search — use session page_id as the
+                      starting point; NEVER invent this value
+        query: Non-empty search term to match against page display names
+        language: Language code, e.g. "en"
     """
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
         return {"success": False, "pages": [], "total_count": 0, "has_more": False, "error": str(exc)}
 
-    return await search_pages_api(site_id, environment, query, language, auth_token)
+    return await search_pages_api(root_page_id, query, language, auth_token)
 
 
 @tool
@@ -49,6 +57,7 @@ async def get_insert_options(
     site_id: str,
     environment: str,
     parent_page_id: str,
+    language: str,
 ) -> dict:
     """
     Retrieve the list of page types (templates) that can be created as child pages
@@ -57,17 +66,22 @@ async def get_insert_options(
     Returns an empty insert_options list if no templates are available (creation not
     permitted at that location).
 
+    IMPORTANT: parent_page_id must be a UUID obtained from search_pages. NEVER pass
+    a string like "root", "home", or any invented value — the API will reject it.
+    Call search_pages with an empty query first to find the home page ID.
+
     Args:
         site_id: Active site identifier from session context
         environment: Active environment identifier from session context
-        parent_page_id: The page ID under which a new child page will be created
+        parent_page_id: UUID of the parent page, obtained from search_pages
+        language: Language code for the site, e.g. "en"
     """
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
         return {"success": False, "insert_options": [], "error": str(exc)}
 
-    return await get_insert_options_api(parent_page_id, auth_token)
+    return await get_insert_options_api(parent_page_id, site_id, language, auth_token)
 
 
 @tool
@@ -84,12 +98,18 @@ async def create_page(
     ONLY call this tool after the marketer has explicitly approved the creation plan
     (parent path, page type, and display name). Returns the new page's ID and display name.
 
+    IMPORTANT: parent_page_id must be a UUID from search_pages — NEVER use "root", "home",
+    or any string that was not returned by a prior search_pages call.
+    template_id must be a UUID from get_insert_options — NEVER invent one.
+
     Args:
         site_id: Active site identifier from session context
         environment: Active environment identifier from session context
-        parent_page_id: ID of the parent page (from search_pages or get_insert_options)
-        template_id: Template ID from get_insert_options result
-        display_name: Human-readable page name chosen by the marketer
+        parent_page_id: UUID of the parent page, obtained from search_pages
+        template_id: Template UUID from get_insert_options result
+        display_name: Simple page label chosen by the marketer — letters, numbers,
+                      hyphens, and spaces only. No slashes, angle brackets, or
+                      special characters (they will be rejected by the API).
         language: Language code for the new page
     """
     try:

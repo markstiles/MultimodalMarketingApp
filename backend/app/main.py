@@ -53,7 +53,6 @@ async def lifespan(app: FastAPI):
         if all_tools:
             mcp_client = MultiServerMCPClient(working_servers)
             set_mcp_tools(all_tools)
-            build_chat_graph()
             logger.info(
                 "MCP tools loaded (%d total from %d servers): %s",
                 len(all_tools),
@@ -61,7 +60,9 @@ async def lifespan(app: FastAPI):
                 [t.name for t in all_tools],
             )
         else:
-            logger.warning("No MCP servers available — running without MCP tools")
+            logger.info("No MCP servers configured — running with REST-only tools")
+
+        build_chat_graph()
     except Exception as exc:
         logger.warning("MCP initialisation failed — running without MCP tools: %s", exc, exc_info=True)
 
