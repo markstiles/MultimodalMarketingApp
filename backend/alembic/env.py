@@ -9,7 +9,7 @@ from sqlmodel import SQLModel
 load_dotenv()
 
 # Import all models so SQLModel.metadata is populated
-from app.resources.models import Conversation, Message, User, UserSession  # noqa: F401
+from app.resources.models import Conversation, ImageEmbedding, Message, User, UserSession  # noqa: F401
 
 config = context.config
 

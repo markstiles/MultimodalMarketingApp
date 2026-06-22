@@ -58,6 +58,7 @@ async def search_site_images(query: str, site_id: str, environment: str = "maste
         }
 
     collection = site_info["collection"]
+    logger.info("search_site_images params — site_id=%r collection=%r environment=%r", site_id, collection, environment)
 
     async with _get_session_factory()() as db:
         return await search_images(
@@ -112,6 +113,7 @@ async def index_media_library_images(
         return {"success": False, "error": site_info.get("error", "Could not resolve site")}
 
     collection = site_info["collection"]
+    site_name = site_info.get("name")
 
     async with _get_session_factory()() as db:
         return await crawl_and_index_media_library(
@@ -122,4 +124,5 @@ async def index_media_library_images(
             auth_token=auth_token,
             db=db,
             batch_limit=batch_limit,
+            site_name=site_name,
         )

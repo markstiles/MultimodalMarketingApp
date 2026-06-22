@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { Message } from "@/lib/types";
+import type { ImageResult, Message } from "@/lib/types";
 import { MessageBubble } from "./MessageBubble";
 
 type Props = {
@@ -9,13 +9,14 @@ type Props = {
   streaming: string;
   toolActivity?: string | null;
   loading?: boolean;
+  onUseImages?: (selected: ImageResult[]) => void;
 };
 
 function formatToolName(tool: string): string {
   return tool.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export function MessageList({ messages, streaming, toolActivity, loading }: Props) {
+export function MessageList({ messages, streaming, toolActivity, loading, onUseImages }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,7 +34,7 @@ export function MessageList({ messages, streaming, toolActivity, loading }: Prop
   return (
     <div className="flex-1 overflow-y-auto p-4 chat-scroll">
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+        <MessageBubble key={msg.id} message={msg} onUseImages={onUseImages} />
       ))}
       {streaming && <MessageBubble streaming={streaming} />}
       {toolActivity && !streaming && (

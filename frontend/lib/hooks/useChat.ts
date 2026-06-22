@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Message, RuntimeContext, SseEvent } from "@/lib/types";
+import type { ImageResult, Message, RuntimeContext, SseEvent } from "@/lib/types";
 
 function pickupUrlConversationId(): string | null {
   if (typeof window === "undefined") return null;
@@ -34,6 +34,8 @@ export function useChat(initialConversationId?: string | null) {
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId ?? null
   );
+  const pendingImageResultsRef = useRef<ImageResult[] | null>(null);
+  const pendingImageQueryRef = useRef<string>("");
 
   // On mount, pick up conversationId from URL (set by auth callback after login redirect)
   useEffect(() => {
@@ -50,6 +52,8 @@ export function useChat(initialConversationId?: string | null) {
       setError(null);
       setStreaming("");
       setToolActivity(null);
+      pendingImageResultsRef.current = null;
+      pendingImageQueryRef.current = "";
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "user", content: text },
@@ -108,15 +112,25 @@ export function useChat(initialConversationId?: string | null) {
               setToolActivity(event.tool);
             } else if (event.type === "tool_end") {
               setToolActivity(null);
+            } else if (event.type === "image_results") {
+              console.log("[useChat] image_results received:", event.results.length, "items");
+              pendingImageResultsRef.current = event.results;
+              pendingImageQueryRef.current = event.query ?? "";
             } else if (event.type === "canvas_reload") {
               setCanvasReload((n) => n + 1);
             } else if (event.type === "done") {
+              const imageResults = pendingImageResultsRef.current ?? undefined;
+              const imageResultsQuery = pendingImageQueryRef.current || undefined;
+              pendingImageResultsRef.current = null;
+              pendingImageQueryRef.current = "";
               setMessages((prev) => [
                 ...prev,
                 {
                   id: crypto.randomUUID(),
                   role: "assistant",
                   content: assistantText,
+                  imageResults,
+                  imageResultsQuery,
                 },
               ]);
               setStreaming("");

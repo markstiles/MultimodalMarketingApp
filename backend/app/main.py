@@ -26,9 +26,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    # MCP tool initialisation
-    # MultiServerMCPClient v0.1+ does NOT support context manager usage;
-    # get_tools() is an async method that creates sessions per call.
+    # MCP tool initialisation — load each server independently so one failure
+    # doesn't prevent other servers' tools from loading.
     mcp_client = None
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -38,15 +37,31 @@ async def lifespan(app: FastAPI):
         from app.services.chat_graph import build_chat_graph
 
         servers = await build_mcp_server_config()
-        mcp_client = MultiServerMCPClient(servers)
-        tools = await mcp_client.get_tools()
-        set_mcp_tools(tools)
-        build_chat_graph()
-        logger.info(
-            "MCP tools loaded (%d total): %s",
-            len(tools),
-            [t.name for t in tools],
-        )
+        all_tools = []
+        working_servers: dict = {}
+
+        for name, config in servers.items():
+            try:
+                client = MultiServerMCPClient({name: config})
+                server_tools = await client.get_tools()
+                all_tools.extend(server_tools)
+                working_servers[name] = config
+                logger.info("MCP server %r loaded %d tools", name, len(server_tools))
+            except Exception as exc:
+                logger.warning("MCP server %r skipped (%s)", name, exc)
+
+        if all_tools:
+            mcp_client = MultiServerMCPClient(working_servers)
+            set_mcp_tools(all_tools)
+            build_chat_graph()
+            logger.info(
+                "MCP tools loaded (%d total from %d servers): %s",
+                len(all_tools),
+                len(working_servers),
+                [t.name for t in all_tools],
+            )
+        else:
+            logger.warning("No MCP servers available — running without MCP tools")
     except Exception as exc:
         logger.warning("MCP initialisation failed — running without MCP tools: %s", exc, exc_info=True)
 

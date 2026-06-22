@@ -16,13 +16,16 @@ PHASE_ARTIFACT_MAP: dict[str, dict[str, str]] = {
     "Research":   {"filename": "research-brief.docx"},
     "Strategy":   {"filename": "marketing-strategy.docx"},
     "BrandVoice": {"filename": "brand-voice-summary.docx"},
-    "Brief":      {"filename": "campaign-brief.docx"},
     "Campaign":   {"filename": "campaign-plan.docx"},
 }
 
+# Phases stored via the Sitecore Agents API briefs endpoints (not the media library)
+BRIEF_API_PHASES: frozenset[str] = frozenset({"Brief"})
+
 CONTENT_STRATEGY_FOLDER = "Content Strategy"
 
-PHASES_ORDERED: list[str] = list(PHASE_ARTIFACT_MAP.keys())
+# Full pipeline order including Brief (handled via Agents API, not media library)
+PHASES_ORDERED: list[str] = ["Research", "Strategy", "BrandVoice", "Brief", "Campaign"]
 STALENESS_DAYS = 365
 
 # Sitecore template ID for media library folders
@@ -228,7 +231,7 @@ async def ensure_phase_upload_folders(
     if not cm_host:
         return
 
-    if phase not in PHASE_ARTIFACT_MAP:
+    if phase not in PHASE_ARTIFACT_MAP or phase in BRIEF_API_PHASES:
         return
 
     site_path = f"/sitecore/Media Library/Project/{collection}/{site_name}"

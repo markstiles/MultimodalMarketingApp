@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RuntimeContext } from "@/lib/types";
 
-const RUNTIME_CONTEXT = process.env.NEXT_PUBLIC_RUNTIME_CONTEXT ?? "iframe";
-
 function localContext(): RuntimeContext {
   return {
     pageId: process.env.NEXT_PUBLIC_LOCAL_PAGE_ID ?? "local-page",
@@ -27,14 +25,20 @@ function toRuntimeContext(
 }
 
 export function useSitecoreContext() {
-  const [context, setContext] = useState<RuntimeContext | null>(
-    RUNTIME_CONTEXT === "local" ? localContext() : null
-  );
-  const [loading, setLoading] = useState(RUNTIME_CONTEXT !== "local");
+  const [context, setContext] = useState<RuntimeContext | null>(null);
+  const [loading, setLoading] = useState(true);
   const clientRef = useRef<any>(null);
 
   useEffect(() => {
-    if (RUNTIME_CONTEXT === "local") return;
+    const inIframe = window.self !== window.parent;
+    console.log("[useSitecoreContext] inIframe =", inIframe);
+
+    if (!inIframe) {
+      console.log("[useSitecoreContext] standalone — using local context:", localContext());
+      setContext(localContext());
+      setLoading(false);
+      return;
+    }
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
@@ -42,16 +46,18 @@ export function useSitecoreContext() {
     import("@sitecore-marketplace-sdk/client")
       .then(async ({ ClientSDK }) => {
         if (cancelled) return;
+        console.log("[useSitecoreContext] SDK loaded, initialising...");
 
         const client = await ClientSDK.init({ target: window.parent, timeout: 10_000 });
         if (cancelled) return;
+        console.log("[useSitecoreContext] SDK initialised");
         clientRef.current = client;
 
-        // Fetch user info once (no subscription support)
         let user: { name?: string; email?: string } | null = null;
         try {
           const userResult = await client.query("host.user");
           if (userResult.data) user = userResult.data;
+          console.log("[useSitecoreContext] user =", user);
         } catch {
           // non-fatal — user info is optional context
         }
@@ -60,21 +66,27 @@ export function useSitecoreContext() {
           subscribe: true,
           onSuccess: (ctx) => {
             if (!cancelled) {
+              console.log("[useSitecoreContext] pages.context update:", ctx);
               setContext(toRuntimeContext(ctx, user));
               setLoading(false);
             }
           },
         });
 
-        if (result.data && !cancelled) {
-          setContext(toRuntimeContext(result.data, user));
+        console.log("[useSitecoreContext] pages.context initial result:", result.data);
+        if (!cancelled) {
+          setContext(result.data ? toRuntimeContext(result.data, user) : localContext());
           setLoading(false);
         }
 
         unsubscribe = result.unsubscribe;
       })
-      .catch(() => {
-        if (!cancelled) setLoading(false);
+      .catch((err) => {
+        console.warn("[useSitecoreContext] SDK failed, falling back to local context:", err);
+        if (!cancelled) {
+          setContext(localContext());
+          setLoading(false);
+        }
       });
 
     return () => {

@@ -4,7 +4,9 @@ import re
 
 from langchain_core.tools import tool
 
+from app.services.brief_service import get_brief, list_briefs
 from app.services.content_workflow_service import (
+    BRIEF_API_PHASES,
     CONTENT_STRATEGY_FOLDER,
     PHASE_ARTIFACT_MAP,
     PHASES_ORDERED,
@@ -86,13 +88,16 @@ def _parse_markdown_sections(text: str) -> list[dict]:
 @tool
 async def scan_content_project_status(site_id: str) -> dict:
     """
-    Scan all five marketing pipeline phase folders in the Sitecore media library and
-    return the current project state for the given site. Call this at the start of
-    every marketing pipeline session to detect existing artifacts and determine the
-    next recommended phase.
+    Scan all five marketing pipeline phases and return the current project state.
 
-    The site's collection (organization grouping) is resolved automatically from the
-    Sites API — you only need to pass the site_id from session context.
+    Media-library phases (Research, Strategy, BrandVoice, Campaign) are checked via
+    the Sitecore SSC API. The Brief phase is checked via the Sitecore Agents API
+    briefs endpoint and does not require a media library artifact.
+
+    Call this at the start of every marketing pipeline session to detect existing
+    artifacts and determine the next recommended phase.
+
+    The site's collection is resolved automatically — you only need site_id.
 
     Args:
         site_id: Site identifier from active session context
@@ -116,30 +121,71 @@ async def scan_content_project_status(site_id: str) -> dict:
     collection = site_info["collection"]
     site_name = site_info["name"]
 
+    media_phases = [p for p in PHASES_ORDERED if p not in BRIEF_API_PHASES]
     checks = await asyncio.gather(
         *[
             check_media_artifact_exists(collection, site_name, phase, auth_token)
-            for phase in PHASES_ORDERED
+            for phase in media_phases
         ],
         return_exceptions=True,
     )
+    media_results = dict(zip(media_phases, checks))
+
+    # Check Brief existence via Agents API (best-effort — failure = not_started)
+    brief_exists = False
+    brief_modified_at = None
+    brief_age_days = None
+    try:
+        briefs = await list_briefs()
+        if briefs:
+            brief_exists = True
+            # Use the most recently updated brief if available
+            latest = max(briefs, key=lambda b: b.get("updatedOn") or b.get("createdOn") or "", default=None)
+            if latest:
+                from datetime import datetime, timezone
+                raw = latest.get("updatedOn") or latest.get("createdOn")
+                if raw:
+                    try:
+                        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                        brief_modified_at = dt.isoformat()
+                        brief_age_days = (datetime.now(timezone.utc) - dt).days
+                    except ValueError:
+                        pass
+    except Exception as exc:
+        logger.warning("Brief API check failed (treating as not_started): %s", exc)
 
     phases = []
     last_completed_phase: str | None = None
     next_recommended_phase: str | None = None
     stale_phase_names: list[str] = []
 
-    for phase, result in zip(PHASES_ORDERED, checks):
-        info = PHASE_ARTIFACT_MAP[phase]
-        media_path = build_artifact_media_path(collection, site_name, phase)
-
-        if isinstance(result, Exception):
-            logger.warning("Phase %s check failed: %s", phase, result)
-            result = {"exists": False, "modified_at": None, "age_days": None}
-
-        exists: bool = result["exists"]
-        modified_at: str | None = result["modified_at"]
-        age_days: int | None = result["age_days"]
+    for phase in PHASES_ORDERED:
+        if phase in BRIEF_API_PHASES:
+            exists = brief_exists
+            modified_at = brief_modified_at
+            age_days = brief_age_days
+            phase_info: dict = {
+                "phase": phase,
+                "storage": "agents_api",
+                "media_path": None,
+                "canonical_filename": None,
+            }
+        else:
+            result = media_results.get(phase, Exception("not checked"))
+            if isinstance(result, Exception):
+                logger.warning("Phase %s check failed: %s", phase, result)
+                result = {"exists": False, "modified_at": None, "age_days": None}
+            exists = result["exists"]
+            modified_at = result["modified_at"]
+            age_days = result["age_days"]
+            media_path = build_artifact_media_path(collection, site_name, phase)
+            phase_info = {
+                "phase": phase,
+                "storage": "media_library",
+                "folder_name": CONTENT_STRATEGY_FOLDER,
+                "canonical_filename": PHASE_ARTIFACT_MAP[phase]["filename"],
+                "media_path": media_path,
+            }
 
         if not exists:
             status = "not_started"
@@ -154,17 +200,12 @@ async def scan_content_project_status(site_id: str) -> dict:
         if next_recommended_phase is None and not exists:
             next_recommended_phase = phase
 
-        phases.append(
-            {
-                "phase": phase,
-                "folder_name": CONTENT_STRATEGY_FOLDER,
-                "canonical_filename": info["filename"],
-                "media_path": media_path,
-                "status": status,
-                "modified_at": modified_at,
-                "age_days": age_days,
-            }
-        )
+        phases.append({
+            **phase_info,
+            "status": status,
+            "modified_at": modified_at,
+            "age_days": age_days,
+        })
 
     return {
         "site_id": site_id,
@@ -203,8 +244,21 @@ async def save_phase_artifact(
     Returns success status and media library path. On failure the error field
     describes what went wrong.
     """
+    if phase in BRIEF_API_PHASES:
+        return {
+            "success": False,
+            "error": (
+                f"Phase 'Brief' is managed via the Sitecore Agents API. "
+                "Use save_campaign_brief instead of save_phase_artifact for briefs."
+            ),
+            "phase": phase,
+            "media_path": None,
+            "filename": None,
+            "overwrite": False,
+        }
+
     if phase not in PHASE_ARTIFACT_MAP:
-        valid = ", ".join(PHASES_ORDERED)
+        valid = ", ".join(p for p in PHASES_ORDERED if p not in BRIEF_API_PHASES)
         return {
             "success": False,
             "error": f"Unknown phase: {phase!r}. Must be one of: {valid}.",
@@ -285,8 +339,21 @@ async def get_phase_artifact_content(site_id: str, phase: str) -> dict:
 
     Returns ArtifactContentResult with extracted text content and modification date.
     """
+    if phase in BRIEF_API_PHASES:
+        return {
+            "success": False,
+            "phase": phase,
+            "media_path": None,
+            "text_content": None,
+            "modified_at": None,
+            "error": (
+                "Phase 'Brief' is managed via the Sitecore Agents API. "
+                "Use get_campaign_brief with the brief_id to retrieve brief content."
+            ),
+        }
+
     if phase not in PHASE_ARTIFACT_MAP:
-        valid = ", ".join(PHASES_ORDERED)
+        valid = ", ".join(p for p in PHASES_ORDERED if p not in BRIEF_API_PHASES)
         return {
             "success": False,
             "phase": phase,

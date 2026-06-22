@@ -104,6 +104,7 @@ class ImageEmbedding(SQLModel, table=True):
     media_path: str
     item_name: str
     alt_text: Optional[str] = None
+    description: Optional[str] = None
     embedding: list = Field(sa_column=Column(Vector(_EMBEDDING_DIM)))
     indexed_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

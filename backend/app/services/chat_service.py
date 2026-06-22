@@ -122,7 +122,7 @@ async def stream_chat(
                 lc_messages.append(AIMessage(content=msg.content))
         lc_messages.append(HumanMessage(content=request.message))
 
-        # Tools that mutate Sitecore content — trigger a canvas reload when they complete
+        # Tools that mutate Sitecore Pages content — trigger a canvas reload when they complete
         _WRITE_TOOLS = frozenset({
             "create_page", "add_language_to_page", "add_component_on_page",
             "set_component_datasource", "create_component_ds",
@@ -130,7 +130,6 @@ async def stream_chat(
             "delete_content", "update_asset", "create_perso_version",
             "create_perso_version_multi", "update_perso_version",
             "create_component_ab_test", "update_ab_test", "set_component_variant",
-            "create_brief_from_draft", "update_brief_from_revision",
         })
 
         # Stream from LangGraph — 30 s timeout per event to detect hung tool calls
@@ -163,6 +162,32 @@ async def stream_chat(
                     yield _event({"type": "tool_end", "tool": tool_name})
                     if tool_name in _WRITE_TOOLS:
                         write_occurred = True
+                    if tool_name == "search_site_images":
+                        raw = event.get("data", {}).get("output")
+                        logger.info("search_site_images on_tool_end output type=%s value=%r", type(raw).__name__, str(raw)[:200])
+                        # LangGraph may deliver the output as a dict, a JSON string, or a ToolMessage
+                        output = raw
+                        if hasattr(raw, "content"):
+                            # ToolMessage — content is a JSON string
+                            import json as _json
+                            try:
+                                output = _json.loads(raw.content)
+                            except Exception:
+                                output = {}
+                        elif isinstance(raw, str):
+                            import json as _json
+                            try:
+                                output = _json.loads(raw)
+                            except Exception:
+                                output = {}
+                        if isinstance(output, dict) and output.get("success") and output.get("results"):
+                            logger.info("Emitting image_results with %d items", len(output["results"]))
+                            yield _event({
+                                "type": "image_results",
+                                "results": output["results"],
+                                "query": output.get("query", ""),
+                                "count": output.get("count", len(output["results"])),
+                            })
         except Exception as exc:
             code = _map_error(exc)
             yield _event({"type": "error", "code": code})

@@ -12,17 +12,17 @@ def anyio_backend(request):
 
 
 class TestBuildArtifactMediaPath:
-    def test_all_five_phases_produce_correct_paths(self):
+    def test_all_media_phases_produce_correct_paths(self):
         from app.services.content_workflow_service import build_artifact_media_path
 
-        # All phase artifacts live flat under "Content Strategy" — no per-phase subfolders.
+        # Brief is managed via the Agents API, not the media library.
+        # Only Research, Strategy, BrandVoice, and Campaign use media library paths.
         # Paths use item names WITHOUT extension: this instance's InvalidItemNameChars
         # includes '.', so Sitecore stores items as "research-brief" not "research-brief.docx".
         cases = {
             "Research":   "research-brief",
             "Strategy":   "marketing-strategy",
             "BrandVoice": "brand-voice-summary",
-            "Brief":      "campaign-brief",
             "Campaign":   "campaign-plan",
         }
         tenant = "acme-corp"
@@ -34,6 +34,12 @@ class TestBuildArtifactMediaPath:
                 f"/Content Strategy/{item_name}"
             )
             assert path == expected, f"Phase {phase}: expected {expected!r}, got {path!r}"
+
+    def test_brief_phase_not_in_media_library(self):
+        from app.services.content_workflow_service import build_artifact_media_path
+
+        with pytest.raises(ValueError, match="Unknown phase"):
+            build_artifact_media_path("t", "s", "Brief")
 
     def test_unknown_phase_raises(self):
         from app.services.content_workflow_service import build_artifact_media_path
@@ -313,28 +319,38 @@ def _fake_site_info_ok(site_id, auth_token):
     return {"success": True, "id": site_id, "name": "s", "collection": "t"}
 
 
+def _patch_scan(monkeypatch, *, media_results=None, briefs=None):
+    """Apply the standard mocks for scan_content_project_status tests.
+
+    media_results: dict mapping phase name → check dict; missing phases → not_started.
+    briefs: list of brief dicts returned by list_briefs (default: [] = Brief not_started).
+    """
+    media_results = media_results or {}
+    briefs = briefs if briefs is not None else []
+
+    async def _fake_token():
+        return "tok"
+
+    async def _fake_site_info(site_id, auth_token):
+        return {"success": True, "id": site_id, "name": "s", "collection": "t"}
+
+    async def _fake_check(collection, site_name, phase, auth_token):
+        return media_results.get(phase, {"exists": False, "modified_at": None, "age_days": None})
+
+    async def _fake_list_briefs(**_kwargs):
+        return briefs
+
+    monkeypatch.setattr("app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token)
+    monkeypatch.setattr("app.clients.content_workflow.get_site_info", _fake_site_info)
+    monkeypatch.setattr("app.clients.content_workflow.check_media_artifact_exists", _fake_check)
+    monkeypatch.setattr("app.clients.content_workflow.list_briefs", _fake_list_briefs)
+
+
 class TestScanContentProjectStatus:
     async def test_all_not_started(self, monkeypatch):
         from app.clients.content_workflow import scan_content_project_status
 
-        async def _fake_token():
-            return "tok"
-
-        async def _fake_site_info(site_id, auth_token):
-            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
-
-        async def _fake_check(collection, site_name, phase, auth_token):
-            return {"exists": False, "modified_at": None, "age_days": None}
-
-        monkeypatch.setattr(
-            "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
-        )
-        monkeypatch.setattr(
-            "app.clients.content_workflow.get_site_info", _fake_site_info
-        )
-        monkeypatch.setattr(
-            "app.clients.content_workflow.check_media_artifact_exists", _fake_check
-        )
+        _patch_scan(monkeypatch)
 
         result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         assert result["next_recommended_phase"] == "Research"
@@ -345,26 +361,9 @@ class TestScanContentProjectStatus:
     async def test_research_complete(self, monkeypatch):
         from app.clients.content_workflow import scan_content_project_status
 
-        async def _fake_token():
-            return "tok"
-
-        async def _fake_site_info(site_id, auth_token):
-            return {"success": True, "id": site_id, "name": "s", "collection": "t"}
-
-        async def _fake_check(collection, site_name, phase, auth_token):
-            if phase == "Research":
-                return {"exists": True, "modified_at": "2026-01-01T00:00:00+00:00", "age_days": 30}
-            return {"exists": False, "modified_at": None, "age_days": None}
-
-        monkeypatch.setattr(
-            "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
-        )
-        monkeypatch.setattr(
-            "app.clients.content_workflow.get_site_info", _fake_site_info
-        )
-        monkeypatch.setattr(
-            "app.clients.content_workflow.check_media_artifact_exists", _fake_check
-        )
+        _patch_scan(monkeypatch, media_results={
+            "Research": {"exists": True, "modified_at": "2026-01-01T00:00:00+00:00", "age_days": 30},
+        })
 
         result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         research = next(p for p in result["phases"] if p["phase"] == "Research")
@@ -372,7 +371,34 @@ class TestScanContentProjectStatus:
         assert result["next_recommended_phase"] == "Strategy"
         assert result["last_completed_phase"] == "Research"
 
-    async def test_stale_phase_detected(self, monkeypatch):
+    async def test_brief_complete_via_agents_api(self, monkeypatch):
+        from app.clients.content_workflow import scan_content_project_status
+
+        # All media phases done, plus a brief exists in the Agents API
+        _patch_scan(monkeypatch, media_results={
+            "Research":   {"exists": True, "modified_at": "2026-01-01T00:00:00+00:00", "age_days": 10},
+            "Strategy":   {"exists": True, "modified_at": "2026-01-02T00:00:00+00:00", "age_days": 9},
+            "BrandVoice": {"exists": True, "modified_at": "2026-01-03T00:00:00+00:00", "age_days": 8},
+        }, briefs=[{"id": "brief-123", "name": "Summer Campaign", "updatedOn": "2026-06-01T00:00:00+00:00"}])
+
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
+        brief = next(p for p in result["phases"] if p["phase"] == "Brief")
+        assert brief["status"] == "complete"
+        assert brief["storage"] == "agents_api"
+        assert brief["media_path"] is None
+        assert result["next_recommended_phase"] == "Campaign"
+
+    async def test_brief_not_started_when_no_briefs(self, monkeypatch):
+        from app.clients.content_workflow import scan_content_project_status
+
+        _patch_scan(monkeypatch, briefs=[])
+
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
+        brief = next(p for p in result["phases"] if p["phase"] == "Brief")
+        assert brief["status"] == "not_started"
+        assert brief["storage"] == "agents_api"
+
+    async def test_brief_api_failure_treated_as_not_started(self, monkeypatch):
         from app.clients.content_workflow import scan_content_project_status
 
         async def _fake_token():
@@ -382,19 +408,26 @@ class TestScanContentProjectStatus:
             return {"success": True, "id": site_id, "name": "s", "collection": "t"}
 
         async def _fake_check(collection, site_name, phase, auth_token):
-            if phase == "Research":
-                return {"exists": True, "modified_at": "2024-01-01T00:00:00+00:00", "age_days": 400}
             return {"exists": False, "modified_at": None, "age_days": None}
 
-        monkeypatch.setattr(
-            "app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token
-        )
-        monkeypatch.setattr(
-            "app.clients.content_workflow.get_site_info", _fake_site_info
-        )
-        monkeypatch.setattr(
-            "app.clients.content_workflow.check_media_artifact_exists", _fake_check
-        )
+        async def _fail_list_briefs(**_kwargs):
+            raise RuntimeError("API unavailable")
+
+        monkeypatch.setattr("app.clients.content_workflow.get_sitecore_media_auth_token", _fake_token)
+        monkeypatch.setattr("app.clients.content_workflow.get_site_info", _fake_site_info)
+        monkeypatch.setattr("app.clients.content_workflow.check_media_artifact_exists", _fake_check)
+        monkeypatch.setattr("app.clients.content_workflow.list_briefs", _fail_list_briefs)
+
+        result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
+        brief = next(p for p in result["phases"] if p["phase"] == "Brief")
+        assert brief["status"] == "not_started"
+
+    async def test_stale_phase_detected(self, monkeypatch):
+        from app.clients.content_workflow import scan_content_project_status
+
+        _patch_scan(monkeypatch, media_results={
+            "Research": {"exists": True, "modified_at": "2024-01-01T00:00:00+00:00", "age_days": 400},
+        })
 
         result = await scan_content_project_status.ainvoke({"site_id": "stub-id"})
         research = next(p for p in result["phases"] if p["phase"] == "Research")
@@ -465,6 +498,20 @@ class TestSavePhaseArtifact:
         assert result["filename"] == "research-brief.docx"
         assert result["overwrite"] is False
         assert result["error"] is None
+
+    async def test_brief_phase_redirects_to_agents_api(self, monkeypatch):
+        from app.clients.content_workflow import save_phase_artifact
+
+        result = await save_phase_artifact.ainvoke(
+            {
+                "site_id": "stub-id",
+                "phase": "Brief",
+                "title": "Campaign Brief",
+                "content": "## Objective\nLaunch product.",
+            }
+        )
+        assert result["success"] is False
+        assert "save_campaign_brief" in result["error"]
 
     async def test_unknown_phase_error(self, monkeypatch):
         from app.clients.content_workflow import save_phase_artifact
@@ -621,11 +668,20 @@ class TestGetPhaseArtifactContent:
         )
 
         result = await get_phase_artifact_content.ainvoke(
-            {"site_id": "stub-id", "phase": "Brief"}
+            {"site_id": "stub-id", "phase": "BrandVoice"}
         )
         assert result["success"] is False
         assert result["text_content"] is None
         assert "Corrupted file" in result["error"]
+
+    async def test_brief_phase_redirects_to_agents_api(self, monkeypatch):
+        from app.clients.content_workflow import get_phase_artifact_content
+
+        result = await get_phase_artifact_content.ainvoke(
+            {"site_id": "stub-id", "phase": "Brief"}
+        )
+        assert result["success"] is False
+        assert "get_campaign_brief" in result["error"]
 
     async def test_unknown_phase_error(self, monkeypatch):
         from app.clients.content_workflow import get_phase_artifact_content
@@ -719,3 +775,140 @@ class TestParseMarkdownSections:
         assert len(sections) == 2
         assert sections[0]["subsections"][0]["content"] == "Sub content."
         assert sections[1]["content"] == "Beta content."
+
+
+# ── Agents API brief tool tests ───────────────────────────────────────────────
+
+class TestBriefApiTools:
+    """Tests for the Agents API brief LangChain tools in app.clients.brief."""
+
+    def _patch_brief_service(self, monkeypatch, func_name, return_value=None, raise_exc=None):
+        """Patch a function in app.services.brief_service as seen by app.clients.brief."""
+        async def _fake(*_args, **_kwargs):
+            if raise_exc:
+                raise raise_exc
+            return return_value
+
+        monkeypatch.setattr(f"app.clients.brief.{func_name}", _fake)
+
+    async def test_get_brief_types_success(self, monkeypatch):
+        from app.clients.brief import get_brief_types
+
+        sample = [{"id": "bt-1", "name": "campaign", "label": {"en-us": "Campaign"}}]
+        self._patch_brief_service(monkeypatch, "list_brief_types", return_value=sample)
+
+        result = await get_brief_types.ainvoke({})
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["brief_types"][0]["id"] == "bt-1"
+
+    async def test_get_brief_types_failure(self, monkeypatch):
+        from app.clients.brief import get_brief_types
+
+        self._patch_brief_service(monkeypatch, "list_brief_types", raise_exc=RuntimeError("Network error"))
+
+        result = await get_brief_types.ainvoke({})
+        assert result["success"] is False
+        assert "Network error" in result["error"]
+
+    async def test_generate_campaign_brief_success(self, monkeypatch):
+        from app.clients.brief import generate_campaign_brief
+
+        generated = {
+            "Objectives": {"type": "RichText", "value": "Launch summer product."},
+            "TargetAudience": {"type": "SimpleText", "value": "Millennials"},
+        }
+        self._patch_brief_service(monkeypatch, "generate_brief", return_value=generated)
+
+        result = await generate_campaign_brief.ainvoke({
+            "brief_type_id": "bt-1",
+            "brand_id": "brand-1",
+            "prompt": "Summer product launch",
+        })
+        assert result["success"] is True
+        assert "Objectives" in result["generated_fields"]
+        assert "Objectives" in result["text_summary"]
+
+    async def test_save_campaign_brief_success(self, monkeypatch):
+        from app.clients.brief import save_campaign_brief
+
+        created = {"id": "brief-abc", "name": "Summer Campaign", "status": "Draft", "locale": "en-us"}
+        self._patch_brief_service(monkeypatch, "create_brief", return_value=created)
+
+        result = await save_campaign_brief.ainvoke({
+            "name": "Summer Campaign",
+            "brief_type_id": "bt-1",
+        })
+        assert result["success"] is True
+        assert result["brief_id"] == "brief-abc"
+        assert result["status"] == "Draft"
+
+    async def test_save_campaign_brief_failure(self, monkeypatch):
+        from app.clients.brief import save_campaign_brief
+
+        self._patch_brief_service(monkeypatch, "create_brief", raise_exc=RuntimeError("HTTP 422"))
+
+        result = await save_campaign_brief.ainvoke({
+            "name": "Bad Brief",
+            "brief_type_id": "bt-1",
+        })
+        assert result["success"] is False
+        assert "422" in result["error"]
+        assert result["brief_id"] is None
+
+    async def test_get_campaign_brief_success(self, monkeypatch):
+        from app.clients.brief import get_campaign_brief
+
+        brief = {
+            "id": "brief-abc",
+            "name": "Summer Campaign",
+            "status": "Draft",
+            "locale": "en-us",
+            "fields": {
+                "Objectives": {"type": "RichText", "value": "Launch product."},
+            },
+            "updatedOn": "2026-06-15T10:00:00Z",
+        }
+        self._patch_brief_service(monkeypatch, "get_brief", return_value=brief)
+
+        result = await get_campaign_brief.ainvoke({"brief_id": "brief-abc"})
+        assert result["success"] is True
+        assert result["brief_id"] == "brief-abc"
+        assert result["status"] == "Draft"
+        assert "Objectives" in result["text_content"]
+
+    async def test_update_campaign_brief_success(self, monkeypatch):
+        from app.clients.brief import update_campaign_brief
+
+        updated = {"id": "brief-abc", "name": "Revised Campaign", "status": "Draft"}
+        self._patch_brief_service(monkeypatch, "update_brief", return_value=updated)
+
+        result = await update_campaign_brief.ainvoke({
+            "brief_id": "brief-abc",
+            "name": "Revised Campaign",
+        })
+        assert result["success"] is True
+        assert result["name"] == "Revised Campaign"
+
+    async def test_find_campaign_brief_returns_list(self, monkeypatch):
+        from app.clients.brief import find_campaign_brief
+
+        items = [
+            {"id": "brief-1", "name": "Summer Campaign", "status": "Draft"},
+            {"id": "brief-2", "name": "Summer Promo", "status": "Draft"},
+        ]
+        self._patch_brief_service(monkeypatch, "list_briefs", return_value=items)
+
+        result = await find_campaign_brief.ainvoke({"name": "Summer"})
+        assert result["success"] is True
+        assert result["count"] == 2
+
+    async def test_find_campaign_brief_empty(self, monkeypatch):
+        from app.clients.brief import find_campaign_brief
+
+        self._patch_brief_service(monkeypatch, "list_briefs", return_value=[])
+
+        result = await find_campaign_brief.ainvoke({})
+        assert result["success"] is True
+        assert result["count"] == 0
+        assert result["briefs"] == []

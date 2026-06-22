@@ -46,21 +46,24 @@ Replace the six-phase generic content workflow with a five-phase marketing pipel
 |------|---------|
 | `backend/app/services/brand_kit_service.py` | Stream API: list/create brand kits, read sections/fields, upload documents, run brand review |
 | `backend/app/services/marketing_research_service.py` | Tavily web search wrapper |
+| `backend/app/services/brief_service.py` | Agents API: list brief types, generate, create, get, update, list briefs |
 | `backend/app/clients/brand_kit.py` | LangChain `@tool` functions for brand kit operations |
 | `backend/app/clients/marketing_research.py` | LangChain `@tool` function for web search |
+| `backend/app/clients/brief.py` | LangChain `@tool` functions for Agents API brief operations |
 
 ---
 
-## Phase Artifact Registry
+## Phase Artifact Storage
 
-All five phase artifacts live **flat** under a single `Content Strategy` folder — no per-phase subfolders. Each artifact has a unique filename so the flat layout is unambiguous and simpler to navigate in the Sitecore media library.
+### Media library phases (Research, Strategy, BrandVoice, Campaign)
+
+These four phases store artifacts as Word documents flat under a single `Content Strategy` folder in the Sitecore media library.
 
 ```python
 PHASE_ARTIFACT_MAP: dict[str, dict[str, str]] = {
     "Research":   {"filename": "research-brief.docx"},
     "Strategy":   {"filename": "marketing-strategy.docx"},
     "BrandVoice": {"filename": "brand-voice-summary.docx"},
-    "Brief":      {"filename": "campaign-brief.docx"},
     "Campaign":   {"filename": "campaign-plan.docx"},
 }
 
@@ -72,13 +75,29 @@ Resulting media paths (example tenant `acme-corp`, site `us-site`):
 /sitecore/Media Library/Project/acme-corp/us-site/Content Strategy/research-brief
 /sitecore/Media Library/Project/acme-corp/us-site/Content Strategy/marketing-strategy
 /sitecore/Media Library/Project/acme-corp/us-site/Content Strategy/brand-voice-summary
-/sitecore/Media Library/Project/acme-corp/us-site/Content Strategy/campaign-brief
 /sitecore/Media Library/Project/acme-corp/us-site/Content Strategy/campaign-plan
 ```
 
 **Key notes**:
 - `ensure_phase_upload_folders` now only creates the `Content Strategy` folder — no per-phase subfolders
 - `build_artifact_media_path` strips the `.docx` extension (this instance's `InvalidItemNameChars` includes `.`)
+
+### Brief phase — Agents API
+
+The Campaign Brief is stored via the Sitecore Agents API briefs endpoints, not the media library. Base URL: `https://edge-platform.sitecorecloud.io/stream/ai-agent-api`. Auth: same `get_sitecore_automation_token()` bearer token.
+
+| Operation | Endpoint | Tool |
+|-----------|----------|------|
+| List brief types | `GET /api/v1/brief/brief-types` | `get_brief_types` |
+| Generate brief (no save) | `POST /api/v1/brief/generate` | `generate_campaign_brief` |
+| Create brief (save) | `POST /api/v1/brief` | `save_campaign_brief` |
+| Get brief by ID | `GET /api/v1/brief/{id}` | `get_campaign_brief` |
+| Update brief | `PUT /api/v1/brief/{id}` | `update_campaign_brief` |
+| List briefs | `GET /api/v1/brief` | `find_campaign_brief` |
+
+`PHASES_ORDERED` still includes `Brief` in position 4; `BRIEF_API_PHASES = frozenset({"Brief"})` marks it as Agents API–managed so `scan_content_project_status`, `save_phase_artifact`, and `get_phase_artifact_content` skip media library operations for it.
+
+`scan_content_project_status` checks brief existence via `list_briefs()` (best-effort — failure → `not_started`).
 
 ---
 
@@ -258,16 +277,12 @@ Before each phase (except Research), call `get_phase_artifact_content` for the p
 
 `backend/tests/test_content_workflow.py` changes:
 
-1. Update `PHASE_ARTIFACT_MAP` expectations to 5 new phases
-2. Update `test_all_phases_produce_correct_paths` with new phase names and item names:
-   - `"Research"` → `"research-brief"`
-   - `"Strategy"` → `"marketing-strategy"`
-   - `"BrandVoice"` → `"brand-voice-summary"` (folder path uses `"Brand Voice"`)
-   - `"Brief"` → `"campaign-brief"`
-   - `"Campaign"` → `"campaign-plan"`
-3. Remove tests for old phases: Structure, Content, Variation, Execution
-4. Update `scan_content_project_status` tool tests for 5-phase output
-5. Add basic `brand_kit_service` tests (mocked httpx) for list_brand_kits and get_brand_kit_voice_sections
+1. `test_all_media_phases_produce_correct_paths` — covers Research, Strategy, BrandVoice, Campaign only
+2. `test_brief_phase_not_in_media_library` — asserts `build_artifact_media_path("t","s","Brief")` raises `ValueError`
+3. `TestScanContentProjectStatus` — mocks `list_briefs` in all tests; new tests: Brief complete via Agents API, Brief not_started when no briefs, Brief API failure → not_started
+4. `TestSavePhaseArtifact.test_brief_phase_redirects_to_agents_api` — asserts error mentioning `save_campaign_brief`
+5. `TestGetPhaseArtifactContent.test_brief_phase_redirects_to_agents_api` — asserts error mentioning `get_campaign_brief`; `test_extraction_failure` uses `BrandVoice` (not `Brief`)
+6. `TestBriefApiTools` (new) — mocked tests for all 6 brief LangChain tools: get_brief_types, generate_campaign_brief, save_campaign_brief, get_campaign_brief, update_campaign_brief, find_campaign_brief
 
 ---
 

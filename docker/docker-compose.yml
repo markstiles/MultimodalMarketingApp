@@ -1,7 +1,6 @@
 services:
   postgres:
-    image: supabase/postgres:17.6.1.067
-    platform: linux/amd64
+    image: pgvector/pgvector:pg17
     container_name: postgres
     hostname: postgres
     environment:

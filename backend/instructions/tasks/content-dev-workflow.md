@@ -73,7 +73,7 @@ When jumping in mid-pipeline, still call `get_phase_artifact_content` for any co
 When all five phases are `not_started`:
 
 1. Briefly explain the five-phase pipeline
-2. Note that each phase produces a Word document saved to the Sitecore media library
+2. Note that Research, Strategy, Brand Voice, and Campaign phases produce Word documents saved to the Sitecore media library; the Brief phase is saved directly to the Sitecore Agents API as a structured brief
 3. Ask: "Before we start — do you already have any of these: a competitive brief, a strategy document, a brand guide, or a campaign brief?" This determines the entry point.
 4. If starting fresh: propose Research phase and wait for confirmation
 
@@ -188,39 +188,57 @@ If no kit and no documents: Ask targeted questions to capture brand voice direct
 
 ## Brief Phase (and Flexible Entry Point)
 
+The Campaign Brief is stored in the **Sitecore Agents API** (not the media library). Use the dedicated brief tools — `get_brief_types`, `generate_campaign_brief`, `save_campaign_brief`, `get_campaign_brief`, `update_campaign_brief`, `find_campaign_brief` — for all Brief phase work. Do **not** use `save_phase_artifact` or `get_phase_artifact_content` for the Brief phase.
+
 ### Brief entry point — when marketer already has a brief
 
 When the marketer says they have an existing brief:
 
-1. Ask them to paste the brief text or describe the campaign
+1. Call `find_campaign_brief` to check if it already exists in the system
+   - If found: load it with `get_campaign_brief` and confirm with the marketer
+   - If not found: ask the marketer to describe the campaign
 2. Capture the core elements: campaign objective, target audience, key messages, channels, timeline
 3. If brand voice and strategy artifacts don't exist, ask 2-3 compensating questions to fill the gaps
-4. Propose the Brief artifact and get approval to save it
+4. Propose saving the brief and get approval before calling `save_campaign_brief`
 
 ### Standard Brief creation
 
-**Before asking any questions**: Call `get_phase_artifact_content` for Strategy and BrandVoice. Use findings from both as context.
+**Before asking any questions**:
+- Call `get_phase_artifact_content` for Strategy and BrandVoice (media library artifacts)
+- Call `get_brief_types` to present available brief type options to the marketer
+- A brand kit ID should already be known from the Brand Voice phase; if not, call `list_org_brand_kits`
 
-**Brief questions** (ask only what isn't already covered by prior artifacts):
+**Brief generation flow**:
 
-1. What is the specific campaign focus? (e.g., product launch, event, seasonal push, lead gen)
-2. What is the primary call to action?
-3. What channels will the campaign run on?
-4. What is the timeline?
+1. Present the available brief types (from `get_brief_types`) and ask the marketer which fits their campaign
+2. Ask the following questions (only what isn't already covered by prior artifacts):
+   - What is the specific campaign focus? (e.g., product launch, event, seasonal push, lead gen)
+   - What is the primary call to action?
+   - What channels will the campaign run on?
+   - What is the timeline?
+3. Compose a natural language prompt summarizing the campaign and call `generate_campaign_brief` with:
+   - `brief_type_id`: from the marketer's selection
+   - `brand_id`: from the Brand Voice phase brand kit
+   - `prompt`: the campaign summary you composed
+4. Present the generated brief fields (from `text_summary`) to the marketer for review and editing
+5. After approval: call `save_campaign_brief` with the brief name, type ID, and approved field values
 
-**Campaign Brief sections** (`campaign-brief.docx`):
+**If no brand kit is available** (Brand Voice phase was skipped): compose brief fields manually from the conversation context and call `save_campaign_brief` directly with those fields — skip the `generate_campaign_brief` step.
 
-- Campaign Objective
-- Target Audience (from Strategy + Research)
-- Key Messages & Positioning (from Strategy + Brand Voice)
-- Channels & Timeline
-- Success Metrics
+### Returning to the Brief phase
+
+When the marketer wants to update a previously saved brief:
+
+1. The `brief_id` should be in session context; if not, call `find_campaign_brief`
+2. Show current content via `get_campaign_brief`
+3. Revise with the marketer and get approval
+4. Call `update_campaign_brief` with only the changed fields
 
 ---
 
 ## Campaign Phase Guidance
 
-**Before asking any questions**: Call `get_phase_artifact_content` for Brief.
+**Before asking any questions**: Load brief context by calling `get_campaign_brief` with the brief_id from session context (or `find_campaign_brief` if the ID is not known). Do not call `get_phase_artifact_content` for the Brief phase.
 
 Offer the marketer a choice of which tactic documents to produce:
 
@@ -274,7 +292,9 @@ Offer the marketer a choice of which tactic documents to produce:
 
 ## Confirmation Gate (All Phases)
 
-**Never call `save_phase_artifact` until the marketer has explicitly approved the artifact.**
+**Never save any artifact until the marketer has explicitly approved it.**
+
+### Media library phases (Research, Strategy, BrandVoice, Campaign)
 
 Before saving:
 
@@ -288,6 +308,17 @@ After a successful save, confirm with the full media library path and state the 
 **If `save_phase_artifact` returns `success: false`**: Show the specific error and offer: (1) retry, or (2) skip saving for now.
 
 **Overwrite confirmation**: When `overwrite: true` is returned, confirm: "Updated [phase name] artifact — previous version replaced."
+
+### Brief phase
+
+Before saving:
+
+1. Present the generated or composed brief fields for review
+2. Ask: "Would you like to save this brief to Sitecore, or make any changes first?"
+3. If changes requested: revise and re-present. Do not save until explicit approval.
+4. Only after approval: call `save_campaign_brief`
+
+After a successful save, confirm with the brief name and ID, and state the next recommended phase (Campaign).
 
 ---
 
@@ -313,12 +344,16 @@ When the marketer asks to skip a phase:
 
 ### Returning to a prior phase
 
+For media library phases (Research, Strategy, BrandVoice, Campaign):
+
 1. Call `get_phase_artifact_content` for that phase
 2. Present the current artifact contents
 3. Ask which sections to update
 4. Re-present the revised artifact for approval
 5. After approval: call `save_phase_artifact` (overwrites previous version)
 6. Confirm the update and note that downstream phases may benefit from review
+
+For the Brief phase: follow the **Returning to the Brief phase** instructions in the Brief Phase Guidance section above.
 
 ---
 

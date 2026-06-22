@@ -1,5 +1,13 @@
 from langchain_core.tools import BaseTool
 
+from app.clients.brief import (
+    find_campaign_brief,
+    generate_campaign_brief,
+    get_brief_types,
+    get_campaign_brief,
+    save_campaign_brief,
+    update_campaign_brief,
+)
 from app.clients.brand_kit import (
     create_org_brand_kit,
     get_brand_voice_summary,
@@ -72,4 +80,10 @@ def get_all_tools() -> list[BaseTool]:
         delete_page,
         search_site_images,
         index_media_library_images,
+        get_brief_types,
+        generate_campaign_brief,
+        save_campaign_brief,
+        get_campaign_brief,
+        update_campaign_brief,
+        find_campaign_brief,
     ]

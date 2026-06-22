@@ -3,16 +3,22 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { Message } from "@/lib/types";
+import type { ImageResult, Message } from "@/lib/types";
+import { ImageResultsPanel } from "./ImageResultsPanel";
 
 type Props = {
   message?: Message;
   streaming?: string;
+  onUseImages?: (selected: ImageResult[]) => void;
 };
 
-export function MessageBubble({ message, streaming }: Props) {
+export function MessageBubble({ message, streaming, onUseImages }: Props) {
   const isUser = message?.role === "user";
-  const content = streaming !== undefined ? streaming : message?.content ?? "";
+  const hasImageResults = !!(message?.imageResults && message.imageResults.length > 0);
+  const rawContent = streaming !== undefined ? streaming : message?.content ?? "";
+  const content = hasImageResults
+    ? `Found ${message!.imageResults!.length} image${message!.imageResults!.length !== 1 ? "s" : ""}${message!.imageResultsQuery ? ` for "${message!.imageResultsQuery}"` : ""}.`
+    : rawContent;
 
   if (streaming !== undefined || !isUser) {
     // Assistant message — left-aligned, clean gray
@@ -29,6 +35,12 @@ export function MessageBubble({ message, streaming }: Props) {
             <span
               className="inline-block w-0.5 h-3 ml-0.5 align-middle"
               style={{ background: "var(--sc-purple)", animation: "pulse 1s infinite" }}
+            />
+          )}
+          {message?.imageResults && message.imageResults.length > 0 && (
+            <ImageResultsPanel
+              results={message.imageResults}
+              onUseSelected={onUseImages}
             />
           )}
         </div>
