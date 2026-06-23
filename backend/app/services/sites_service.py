@@ -16,16 +16,40 @@ def _get_base_url() -> str:
     ).rstrip("/")
 
 
-def _get_collections_base_url() -> str:
+def _get_api_base_url() -> str:
+    """Return the /api/v1 root (strips trailing /sites if present)."""
     base = os.environ.get(
         "SITECORE_SITES_API_BASE_URL",
         "https://xmapps-api.sitecorecloud.io/api/v1",
-    )
-    # Strip trailing /sites so we can append /collections
-    base = base.rstrip("/")
+    ).rstrip("/")
     if base.endswith("/sites"):
         base = base[: -len("/sites")]
-    return f"{base}/collections"
+    return base
+
+
+def _get_collections_base_url() -> str:
+    return f"{_get_api_base_url()}/collections"
+
+
+def _get_languages_base_url() -> str:
+    return f"{_get_api_base_url()}/languages"
+
+
+import re as _re
+
+_UUID_RE = _re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    _re.IGNORECASE,
+)
+
+
+def _normalize_guid(value: str) -> str:
+    """Strip Sitecore-style curly braces from a GUID, e.g. {B0A6...} → b0a6..."""
+    return value.strip("{}").lower() if value else value
+
+
+def _is_valid_guid(value: str) -> bool:
+    return bool(_UUID_RE.match(_normalize_guid(value)))
 
 
 def _auth_headers(auth_token: str) -> dict[str, str]:
@@ -196,23 +220,165 @@ async def list_sites(auth_token: str) -> dict:
     return {"success": True, "sites": sites, "count": len(sites)}
 
 
+async def get_site_templates(environment_id: str, auth_token: str) -> dict:
+    """Return available site templates for the given environment.
+
+    Returns {success, templates, count} on success. Each template has id, name,
+    and description fields. Pass a template id to create_site.
+    """
+    base_url = _get_base_url()
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                f"{base_url}/templates",
+                params={"environmentId": environment_id},
+                headers=_auth_headers(auth_token),
+            )
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_site_templates HTTP %d: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "templates": [], "error": str(exc)}
+    except Exception as exc:
+        logger.warning("get_site_templates error: %s", exc)
+        return {"success": False, "templates": [], "error": str(exc)}
+
+    raw = data if isinstance(data, list) else (
+        data.get("data") or data.get("templates") or data.get("items") or []
+    )
+    templates = [
+        {
+            "template_id": _normalize_guid(t.get("id", "")),
+            "template_name": t.get("name") or t.get("displayName") or "",
+            "description": t.get("description", ""),
+        }
+        for t in (raw if isinstance(raw, list) else [])
+    ]
+    return {"success": True, "templates": templates, "count": len(templates)}
+
+
+async def get_environment_languages(environment_id: str, auth_token: str) -> dict:
+    """Return all languages available in the given environment.
+
+    Returns {success, languages, count} on success. Each language entry has at
+    minimum an isoCode field (e.g. "en", "fr-FR"). Pass isoCode to create_site.
+    """
+    url = _get_languages_base_url()
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(url, params={"environmentId": environment_id}, headers=_auth_headers(auth_token))
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_environment_languages HTTP %d: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "languages": [], "error": str(exc)}
+    except Exception as exc:
+        logger.warning("get_environment_languages error: %s", exc)
+        return {"success": False, "languages": [], "error": str(exc)}
+
+    raw = data if isinstance(data, list) else (data.get("data") or data.get("languages") or data.get("items") or [])
+    languages = []
+    for item in raw:
+        if isinstance(item, str):
+            languages.append({"isoCode": item, "label": item})
+        elif isinstance(item, dict):
+            iso = item.get("isoCode") or item.get("code") or item.get("language") or ""
+            languages.append({
+                "isoCode": iso,
+                "label": item.get("displayName") or item.get("englishName") or iso,
+                **{k: v for k, v in item.items() if k not in ("isoCode", "code", "language")},
+            })
+
+    return {"success": True, "languages": languages, "count": len(languages)}
+
+
+async def validate_site_name(
+    site_name: str,
+    language: str,
+    template_id: str,
+    auth_token: str,
+) -> dict:
+    """Validate a proposed site name via POST /api/v1/sites/name/validate.
+
+    Returns {success, valid, site_name} when the name is accepted, or
+    {success, valid=False, errors} when the API rejects it with field-level messages.
+    """
+    if not _is_valid_guid(template_id):
+        return {
+            "success": False,
+            "valid": False,
+            "error": (
+                f"template_id must be the UUID from get_site_templates (the 'template_id' field), "
+                f"not the template name. Got: {template_id!r}"
+            ),
+        }
+    base_url = _get_base_url()
+    body = {"name": site_name, "language": language, "templateId": _normalize_guid(template_id)}
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                f"{base_url}/name/validate",
+                json=body,
+                headers=_auth_headers(auth_token),
+            )
+        if resp.status_code in (200, 204):
+            return {"success": True, "valid": True, "site_name": site_name}
+        if resp.status_code == 400:
+            try:
+                error_data = resp.json()
+            except Exception:
+                error_data = {}
+            logger.warning(
+                "validate_site_name rejected %r (lang=%s template=%s): %s",
+                site_name, language, template_id, error_data,
+            )
+            return {
+                "success": True,
+                "valid": False,
+                "site_name": site_name,
+                "errors": error_data.get("errors", error_data),
+            }
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error("validate_site_name HTTP %d: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "valid": False, "error": str(exc)}
+    except Exception as exc:
+        logger.warning("validate_site_name error: %s", exc)
+        return {"success": False, "valid": False, "error": str(exc)}
+
+    return {"success": True, "valid": True, "site_name": site_name}
+
+
 async def create_site(
     name: str,
     collection: str,
     language: str,
+    template_id: str,
     auth_token: str,
 ) -> dict:
     """Create a new Sitecore XM Cloud site.
 
-    `collection` is the organizational grouping (also called tenant) the site
-    belongs to. Providing a collection name that does not yet exist will create
-    a new collection automatically.
+    Call get_site_templates to obtain a valid template_id and validate_site_name
+    to confirm the name is acceptable before calling this function.
 
     Returns {success, id, name, collection} on success or {success, error} on failure.
     A 409 means a site with that name already exists in the given collection.
     """
+    if not _is_valid_guid(template_id):
+        return {
+            "success": False,
+            "error": (
+                f"template_id must be the UUID from get_site_templates (the 'template_id' field), "
+                f"not the template name. Got: {template_id!r}"
+            ),
+        }
     base_url = _get_base_url()
-    payload = {"name": name, "collection": collection, "language": language}
+    payload = {
+        "siteName": name,
+        "collectionName": collection,
+        "language": language,
+        "templateId": _normalize_guid(template_id),
+    }
     try:
         async with httpx.AsyncClient(timeout=30) as http:
             resp = await http.post(base_url, json=payload, headers=_auth_headers(auth_token))
@@ -223,6 +389,14 @@ async def create_site(
             }
         resp.raise_for_status()
         data = resp.json() if resp.content else {}
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "create_site HTTP %d (payload=%s): %s",
+            exc.response.status_code,
+            payload,
+            exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
     except httpx.TimeoutException:
         return {"success": False, "error": f"Timed out creating site {name!r}"}
     except Exception as exc:
@@ -232,7 +406,7 @@ async def create_site(
     result = {
         "success": True,
         "id": data.get("id", ""),
-        "name": data.get("name", name),
+        "name": data.get("name") or data.get("siteName") or name,
         "collection": await _resolve_collection(data, auth_token) or collection,
     }
     if result["id"]:

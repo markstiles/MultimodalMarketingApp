@@ -3,19 +3,23 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { ImageResult, Message } from "@/lib/types";
+import type { ImageResult, Message, OptionItem } from "@/lib/types";
 import { ImageResultsPanel } from "./ImageResultsPanel";
+import { OptionsPanel } from "./OptionsPanel";
 
 type Props = {
   message?: Message;
   streaming?: string;
   onUseImages?: (selected: ImageResult[]) => void;
+  onSelectOption?: (item: OptionItem) => void;
 };
 
-export function MessageBubble({ message, streaming, onUseImages }: Props) {
+export function MessageBubble({ message, streaming, onUseImages, onSelectOption }: Props) {
   const isUser = message?.role === "user";
   const hasImageResults = !!(message?.imageResults && message.imageResults.length > 0);
+  const hasOptions = !!(message?.options && message.options.items.length > 0);
   const rawContent = streaming !== undefined ? streaming : message?.content ?? "";
+  // When image results are present, suppress the LLM's text description of them
   const content = hasImageResults
     ? `Found ${message!.imageResults!.length} image${message!.imageResults!.length !== 1 ? "s" : ""}${message!.imageResultsQuery ? ` for "${message!.imageResultsQuery}"` : ""}.`
     : rawContent;
@@ -41,6 +45,12 @@ export function MessageBubble({ message, streaming, onUseImages }: Props) {
             <ImageResultsPanel
               results={message.imageResults}
               onUseSelected={onUseImages}
+            />
+          )}
+          {hasOptions && onSelectOption && (
+            <OptionsPanel
+              options={message!.options!}
+              onSelect={onSelectOption}
             />
           )}
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ImageResult, Message, RuntimeContext, SseEvent } from "@/lib/types";
+import type { ImageResult, Message, OptionsPayload, RuntimeContext, SseEvent } from "@/lib/types";
 
 function pickupUrlConversationId(): string | null {
   if (typeof window === "undefined") return null;
@@ -36,6 +36,7 @@ export function useChat(initialConversationId?: string | null) {
   );
   const pendingImageResultsRef = useRef<ImageResult[] | null>(null);
   const pendingImageQueryRef = useRef<string>("");
+  const pendingOptionsRef = useRef<OptionsPayload | null>(null);
 
   // On mount, pick up conversationId from URL (set by auth callback after login redirect)
   useEffect(() => {
@@ -54,6 +55,7 @@ export function useChat(initialConversationId?: string | null) {
       setToolActivity(null);
       pendingImageResultsRef.current = null;
       pendingImageQueryRef.current = "";
+      pendingOptionsRef.current = null;
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "user", content: text },
@@ -116,13 +118,23 @@ export function useChat(initialConversationId?: string | null) {
               console.log("[useChat] image_results received:", event.results.length, "items");
               pendingImageResultsRef.current = event.results;
               pendingImageQueryRef.current = event.query ?? "";
+            } else if (event.type === "options") {
+              console.log("[useChat] options received:", event.count, "items type=", event.option_type);
+              pendingOptionsRef.current = {
+                items: event.items,
+                prompt: event.prompt,
+                option_type: event.option_type,
+                count: event.count,
+              };
             } else if (event.type === "canvas_reload") {
               setCanvasReload((n) => n + 1);
             } else if (event.type === "done") {
               const imageResults = pendingImageResultsRef.current ?? undefined;
               const imageResultsQuery = pendingImageQueryRef.current || undefined;
+              const options = pendingOptionsRef.current ?? undefined;
               pendingImageResultsRef.current = null;
               pendingImageQueryRef.current = "";
+              pendingOptionsRef.current = null;
               setMessages((prev) => [
                 ...prev,
                 {
@@ -131,6 +143,7 @@ export function useChat(initialConversationId?: string | null) {
                   content: assistantText,
                   imageResults,
                   imageResultsQuery,
+                  options,
                 },
               ]);
               setStreaming("");

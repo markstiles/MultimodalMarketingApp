@@ -68,16 +68,27 @@ async def create_brief(
 
 
 async def get_brief(brief_id: str) -> dict:
-    """Retrieve a saved brief by ID via GET /api/v1/brief/{brief_id}."""
+    """Retrieve a saved brief by ID via GET /api/v1/brief/{brief_id}.
+
+    Falls back to listing all briefs and filtering by ID if the direct GET returns 404,
+    since the list endpoint and the individual GET endpoint can behave differently.
+    """
     token = await get_sitecore_automation_token()
     url = f"{_AGENT_API_BASE}/api/v1/brief/{brief_id}"
     async with httpx.AsyncClient(timeout=15) as http:
         resp = await http.get(url, headers=_headers(token))
     if resp.status_code == 404:
+        # The individual GET sometimes returns 404 for briefs that are accessible via the
+        # list endpoint — fall back to listing and finding by ID.
+        logger.warning("get_brief: 404 for ID %s, falling back to list endpoint", brief_id)
+        all_briefs = await list_briefs()
+        for brief in all_briefs:
+            if brief.get("id") == brief_id:
+                logger.info("get_brief: resolved via list fallback for ID %s", brief_id)
+                return brief
         raise ValueError(
-            f"Brief '{brief_id}' not found (404). "
-            "The ID may be from a different tool — use find_campaign_brief to list "
-            "briefs accessible via the Agents API, then copy the id from that response."
+            f"Brief '{brief_id}' not found. "
+            "Use find_campaign_brief to list available briefs and confirm the ID."
         )
     resp.raise_for_status()
     return resp.json()

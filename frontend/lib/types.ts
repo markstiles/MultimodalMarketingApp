@@ -17,6 +17,21 @@ export type ImageResult = {
   score: number;
 };
 
+export type OptionItem = {
+  id: string;
+  label: string;
+  description?: string;
+  thumbnail?: string;
+  metadata?: string;
+};
+
+export type OptionsPayload = {
+  items: OptionItem[];
+  prompt: string;
+  option_type: string;
+  count: number;
+};
+
 export type Message = {
   id: string;
   role: MessageRole;
@@ -24,6 +39,7 @@ export type Message = {
   createdAt?: string;
   imageResults?: ImageResult[];
   imageResultsQuery?: string;
+  options?: OptionsPayload;
 };
 
 export type ConversationSummary = {
@@ -45,6 +61,7 @@ export type SseEvent =
   | { type: "tool_end"; tool: string }
   | { type: "canvas_reload" }
   | { type: "image_results"; results: ImageResult[]; query: string; count: number }
+  | { type: "options"; items: OptionItem[]; prompt: string; option_type: string; count: number }
   | { type: "done" }
   | { type: "error"; code: string };
 

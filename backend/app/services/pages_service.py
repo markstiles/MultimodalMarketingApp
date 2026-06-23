@@ -90,7 +90,7 @@ async def search_pages_api(
             "parent_path": p.get("parentPath", p.get("path", "")),
             "template_name": p.get("templateName", ""),
             "is_folder": p.get("isFolder", False),
-            "site_id": site_id,
+            "site_id": p.get("siteId", ""),
         }
         for p in (raw_pages if isinstance(raw_pages, list) else [])
     ]
@@ -152,16 +152,20 @@ async def get_page_state_api(
     auth_token: str,
 ) -> dict:
     base_url = _get_base_url()
+    normalized = _normalize_id(page_id)
     try:
         async with httpx.AsyncClient(timeout=15) as http:
             resp = await http.get(
-                f"{base_url}/{page_id}/state",
+                f"{base_url}/{normalized}/state",
                 headers=_auth_headers(auth_token),
             )
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        logger.error("get_page_state_api HTTP %s", exc.response.status_code)
+        logger.error(
+            "get_page_state_api HTTP %s (raw=%r normalized=%r): %s",
+            exc.response.status_code, page_id, normalized, exc.response.text,
+        )
         return {"success": False, "error": str(exc)}
     except Exception as exc:
         logger.error("get_page_state_api error: %s", exc)

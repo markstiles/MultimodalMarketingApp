@@ -39,6 +39,12 @@ _TASK_SIGNALS: dict[str, list[str]] = {
         "seo", "search engine", "meta description", "meta title", "page title",
         "keyword", "ranking", "organic traffic", "search optimization",
     ],
+    "site-management": [
+        "create a site", "create site", "new site", "set up a site", "provision a site",
+        "add a site", "create a microsite", "deploy a site",
+        "site template", "site language", "site collection",
+        "list sites", "show sites", "available sites",
+    ],
 }
 
 
@@ -100,14 +106,19 @@ async def stream_chat(
         system_prompt = load_instructions(task_name)
         ctx = request.context
 
+        # Empty string means the field was not available from the host environment.
+        site_desc = f"`{ctx.site_id}`" if ctx.site_id else "**unknown** — call `list_sites` to discover available sites before attempting any site-scoped operation"
+        page_desc = f"`{ctx.page_id}`" if ctx.page_id else "**not selected** — the user has not navigated to a page yet; ask them to select one in the Pages editor content tree, or use `search_pages` once a site is known"
+        lang_desc = ctx.language or "en"
+
         user_lines = []
         if ctx.user_name:
             user_lines.append(f"You are helping **{ctx.user_name}**")
             if ctx.user_email:
                 user_lines.append(f"({ctx.user_email})")
-            user_lines.append(f"on site `{ctx.site_id}`, page `{ctx.page_id}`, language `{ctx.language}`.")
+            user_lines.append(f"on site {site_desc}, page {page_desc}, language `{lang_desc}`.")
         else:
-            user_lines.append(f"Current context: site `{ctx.site_id}`, page `{ctx.page_id}`, language `{ctx.language}`.")
+            user_lines.append(f"Current context: site {site_desc}, page {page_desc}, language `{lang_desc}`.")
 
         system_prompt += "\n\n## Session Context\n\n" + " ".join(user_lines)
         lc_messages = [SystemMessage(content=system_prompt)]
@@ -162,13 +173,13 @@ async def stream_chat(
                     yield _event({"type": "tool_end", "tool": tool_name})
                     if tool_name in _WRITE_TOOLS:
                         write_occurred = True
-                    if tool_name == "search_site_images":
+                    if tool_name in ("search_site_images", "present_options"):
                         raw = event.get("data", {}).get("output")
-                        logger.info("search_site_images on_tool_end output type=%s value=%r", type(raw).__name__, str(raw)[:200])
+                        if tool_name == "search_site_images":
+                            logger.info("search_site_images on_tool_end output type=%s value=%r", type(raw).__name__, str(raw)[:200])
                         # LangGraph may deliver the output as a dict, a JSON string, or a ToolMessage
                         output = raw
                         if hasattr(raw, "content"):
-                            # ToolMessage — content is a JSON string
                             import json as _json
                             try:
                                 output = _json.loads(raw.content)
@@ -180,14 +191,24 @@ async def stream_chat(
                                 output = _json.loads(raw)
                             except Exception:
                                 output = {}
-                        if isinstance(output, dict) and output.get("success") and output.get("results"):
-                            logger.info("Emitting image_results with %d items", len(output["results"]))
-                            yield _event({
-                                "type": "image_results",
-                                "results": output["results"],
-                                "query": output.get("query", ""),
-                                "count": output.get("count", len(output["results"])),
-                            })
+                        if isinstance(output, dict):
+                            if tool_name == "search_site_images" and output.get("success") and output.get("results"):
+                                logger.info("Emitting image_results with %d items", len(output["results"]))
+                                yield _event({
+                                    "type": "image_results",
+                                    "results": output["results"],
+                                    "query": output.get("query", ""),
+                                    "count": output.get("count", len(output["results"])),
+                                })
+                            elif tool_name == "present_options" and output.get("presented") and output.get("items"):
+                                logger.info("Emitting options with %d items (type=%s)", len(output["items"]), output.get("option_type"))
+                                yield _event({
+                                    "type": "options",
+                                    "items": output["items"],
+                                    "prompt": output.get("prompt", ""),
+                                    "option_type": output.get("option_type", "generic"),
+                                    "count": output.get("count", len(output["items"])),
+                                })
         except Exception as exc:
             code = _map_error(exc)
             yield _event({"type": "error", "code": code})

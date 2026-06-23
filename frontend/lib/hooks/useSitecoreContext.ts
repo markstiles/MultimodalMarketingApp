@@ -3,10 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RuntimeContext } from "@/lib/types";
 
+/**
+ * Normalize a Sitecore GUID that may arrive with curly braces, e.g. {B0A6...} → b0a6...
+ * Returns empty string unchanged so callers can detect "unavailable" via falsy check.
+ */
+function normalizeGuid(value: string | undefined | null): string {
+  if (!value) return "";
+  return value.replace(/^\{|\}$/g, "").toLowerCase();
+}
+
+/**
+ * Fallback context used when running standalone (not in Pages editor) or when the
+ * SDK fails to provide context. Empty string for IDs means "unavailable" — the backend
+ * system prompt will instruct the LLM to call list_sites / ask the user as needed.
+ * Set NEXT_PUBLIC_LOCAL_SITE_ID / NEXT_PUBLIC_LOCAL_PAGE_ID in .env.local to seed
+ * known IDs for local development without needing the Pages editor.
+ */
 function localContext(): RuntimeContext {
   return {
-    pageId: process.env.NEXT_PUBLIC_LOCAL_PAGE_ID ?? "local-page",
-    siteId: process.env.NEXT_PUBLIC_LOCAL_SITE_ID ?? "local-site",
+    pageId: normalizeGuid(process.env.NEXT_PUBLIC_LOCAL_PAGE_ID),
+    siteId: normalizeGuid(process.env.NEXT_PUBLIC_LOCAL_SITE_ID),
     language: process.env.NEXT_PUBLIC_LOCAL_LANGUAGE ?? "en",
   };
 }
@@ -16,8 +32,9 @@ function toRuntimeContext(
   user?: { name?: string; email?: string } | null
 ): RuntimeContext {
   return {
-    pageId: ctx.pageInfo?.id ?? "",
-    siteId: ctx.siteInfo?.id ?? "",
+    // Normalize GUIDs — the SDK may return {GUID} format with braces
+    pageId: normalizeGuid(ctx.pageInfo?.id),
+    siteId: normalizeGuid(ctx.siteInfo?.id),
     language: ctx.siteInfo?.language ?? "en",
     userName: user?.name ?? undefined,
     userEmail: user?.email ?? undefined,
@@ -62,24 +79,32 @@ export function useSitecoreContext() {
           // non-fatal — user info is optional context
         }
 
-        const result = await client.query("pages.context", {
-          subscribe: true,
-          onSuccess: (ctx) => {
-            if (!cancelled) {
-              console.log("[useSitecoreContext] pages.context update:", ctx);
-              setContext(toRuntimeContext(ctx, user));
-              setLoading(false);
-            }
-          },
-        });
+        try {
+          const result = await client.query("pages.context", {
+            subscribe: true,
+            onSuccess: (ctx) => {
+              if (!cancelled) {
+                console.log("[useSitecoreContext] pages.context update:", ctx);
+                setContext(toRuntimeContext(ctx, user));
+                setLoading(false);
+              }
+            },
+          });
 
-        console.log("[useSitecoreContext] pages.context initial result:", result.data);
-        if (!cancelled) {
-          setContext(result.data ? toRuntimeContext(result.data, user) : localContext());
-          setLoading(false);
+          console.log("[useSitecoreContext] pages.context initial result:", result?.data);
+          if (!cancelled) {
+            setContext(result?.data ? toRuntimeContext(result.data, user) : localContext());
+            setLoading(false);
+          }
+
+          unsubscribe = result?.unsubscribe;
+        } catch (err) {
+          console.warn("[useSitecoreContext] pages.context not available, using local context:", err);
+          if (!cancelled) {
+            setContext(localContext());
+            setLoading(false);
+          }
         }
-
-        unsubscribe = result.unsubscribe;
       })
       .catch((err) => {
         console.warn("[useSitecoreContext] SDK failed, falling back to local context:", err);
@@ -99,5 +124,10 @@ export function useSitecoreContext() {
     clientRef.current?.mutate("pages.reloadCanvas");
   }, []);
 
-  return { context, loading, reloadCanvas };
+  /** Tell the Pages editor to navigate its content tree to the given page ID. */
+  const navigateToPage = useCallback((pageId: string) => {
+    clientRef.current?.mutate("pages.navigate", { pageId });
+  }, []);
+
+  return { context, loading, reloadCanvas, navigateToPage };
 }

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useChat } from "@/lib/hooks/useChat";
 import { useSitecoreContext } from "@/lib/hooks/useSitecoreContext";
-import type { ImageResult } from "@/lib/types";
+import type { ImageResult, OptionItem } from "@/lib/types";
 import { ChatInput } from "./ChatInput";
 import { MessageList } from "./MessageList";
 
@@ -27,9 +27,14 @@ export function ChatPanel() {
     send(`Use these images: ${paths}`, context);
   }
 
+  function handleSelectOption(item: OptionItem) {
+    if (!context) return;
+    send(item.label, context);
+  }
+
   return (
     <div className="flex flex-col h-full bg-white" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} loading={loading} onUseImages={handleUseImages} />
+      <MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} loading={loading} onUseImages={handleUseImages} onSelectOption={handleSelectOption} />
 
       {error && (
         <div

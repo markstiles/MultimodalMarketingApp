@@ -24,6 +24,11 @@ def _load(path: Path) -> str:
     return _cache[key]
 
 
+def clear_cache() -> None:
+    """Flush the in-process instruction cache — useful after editing .md files."""
+    _cache.clear()
+
+
 def load_instructions(task_name: str | None = None) -> str:
     base = _load(_BACKEND_DIR / "instructions" / "system" / "base.md")
     guardrails = _load(_BACKEND_DIR / "instructions" / "guardrails" / "core.md")

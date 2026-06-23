@@ -24,9 +24,12 @@ from app.clients.marketing_research import search_market_research
 from app.clients.sites import (
     add_language_to_site,
     create_marketing_site,
+    get_environment_languages,
     get_site_context,
+    get_site_templates,
     list_all_sites,
     list_site_languages,
+    validate_site_name,
 )
 from app.clients.pages_api import (
     create_page,
@@ -43,6 +46,7 @@ from app.clients.image_search import (
     index_media_library_images,
     search_site_images,
 )
+from app.clients.ui_tools import present_options
 
 _mcp_tools: list[BaseTool] = []
 
@@ -60,6 +64,9 @@ def get_all_tools() -> list[BaseTool]:
         get_phase_artifact_content,
         get_site_context,
         list_all_sites,
+        get_site_templates,
+        get_environment_languages,
+        validate_site_name,
         create_marketing_site,
         list_site_languages,
         add_language_to_site,
@@ -86,4 +93,5 @@ def get_all_tools() -> list[BaseTool]:
         get_campaign_brief,
         update_campaign_brief,
         find_campaign_brief,
+        present_options,
     ]
