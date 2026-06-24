@@ -9,7 +9,7 @@ type Props = {
   streaming: string;
   toolActivity?: string | null;
   loading?: boolean;
-  onUseImages?: (selected: ImageResult[]) => void;
+  onImagesSelected?: (selected: ImageResult[]) => void;
   onSelectOption?: (item: OptionItem) => void;
 };
 
@@ -17,7 +17,7 @@ function formatToolName(tool: string): string {
   return tool.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export function MessageList({ messages, streaming, toolActivity, loading, onUseImages, onSelectOption }: Props) {
+export function MessageList({ messages, streaming, toolActivity, loading, onImagesSelected, onSelectOption }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export function MessageList({ messages, streaming, toolActivity, loading, onUseI
   return (
     <div className="flex-1 overflow-y-auto p-4 chat-scroll">
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} onUseImages={onUseImages} onSelectOption={onSelectOption} />
+        <MessageBubble key={msg.id} message={msg} onImagesSelected={onImagesSelected} onSelectOption={onSelectOption} />
       ))}
       {streaming && <MessageBubble streaming={streaming} />}
       {toolActivity && !streaming && (

@@ -1,15 +1,18 @@
 "use client";
 
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
+import type { ImageResult } from "@/lib/types";
 
 const MAX_CHARS = 32000;
 
 type Props = {
   onSend: (text: string) => void;
   disabled: boolean;
+  pendingImages?: ImageResult[];
+  onClearImages?: () => void;
 };
 
-export function ChatInput({ onSend, disabled }: Props) {
+export function ChatInput({ onSend, disabled, pendingImages, onClearImages }: Props) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -44,12 +47,30 @@ export function ChatInput({ onSend, disabled }: Props) {
   }
 
   const near = value.length > MAX_CHARS * 0.9;
+  const imageCount = pendingImages?.length ?? 0;
 
   return (
     <div
       className="px-3 py-2 shrink-0"
       style={{ borderTop: "1px solid var(--sc-border)", background: "#fafafa" }}
     >
+      {imageCount > 0 && (
+        <div className="mb-1.5 flex items-center gap-1.5 text-xs" style={{ color: "var(--sc-purple)" }}>
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 fill-current">
+            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+          </svg>
+          <span>
+            {imageCount} image{imageCount !== 1 ? "s" : ""} attached
+          </span>
+          <button
+            onClick={onClearImages}
+            className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+            title="Clear attached images"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className="flex items-end gap-2">
         <textarea
           ref={textareaRef}

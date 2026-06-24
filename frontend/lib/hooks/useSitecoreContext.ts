@@ -79,6 +79,14 @@ export function useSitecoreContext() {
           // non-fatal — user info is optional context
         }
 
+        // The SDK calls console.error internally before throwing when the host does not
+        // support pages.context (e.g. full-screen chat). Suppress only that specific
+        // message so it doesn't appear as a red console error — our catch handles it.
+        const _origError = console.error;
+        console.error = (...args: Parameters<typeof console.error>) => {
+          if (typeof args[0] === "string" && args[0].includes("getPagesContext")) return;
+          _origError.apply(console, args);
+        };
         try {
           const result = await client.query("pages.context", {
             subscribe: true,
@@ -104,6 +112,8 @@ export function useSitecoreContext() {
             setContext(localContext());
             setLoading(false);
           }
+        } finally {
+          console.error = _origError;
         }
       })
       .catch((err) => {

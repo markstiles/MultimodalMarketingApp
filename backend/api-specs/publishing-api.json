@@ -1,0 +1,1486 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Publishing API",
+    "description": "Use the XM Cloud Publishing API to manage publishing jobs for a specific XM Cloud tenant. This API lets you create new publishing jobs, list both running and completed publishing jobs, and retrieve statistics about the publishing jobs of an XM Cloud tenant.\n## Authentication\nTo use the Publishing API, you need a [JWT token](https://doc.sitecore.com/xmc/en/developers/xm-cloud/request-a-jwt-for-experience-edge.html) requested using an [automation client](https://doc.sitecore.com/xmc/en/developers/xm-cloud/manage-client-credentials-for-an-xm-cloud-organization-or-environment.html#create-an-automation-client-for-an-xm-cloud-environment). This is sent with every request. <br> {% admonition type=\"info\" name=\"Note\" %}To use publishing endpoints, your token must include the required scopes. {% /admonition %}\n",
+    "version": "v1.0",
+    "x-metadata": {
+      "product": "SitecoreAI"
+    },
+    "license": {
+      "name": "closed source",
+      "url": "https://www.sitecore.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://edge-platform.sitecorecloud.io"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Jobs",
+      "description": "The jobs endpoint is used to manage publishing jobs of the context tenant."
+    }
+  ],
+  "paths": {
+    "/authoring/publishing/v1/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Retrieve a publishing job",
+        "description": "Retrieves a specific publishing job with the specified ID, for example, `job_41B25`. <br> {% admonition type=\"info\" name=\"Note\" %}To retrieve a job, your token must include one of the following scopes ` xmcpub.jobs.a:r`, `xmcpub.jobs.t:r`, or `xmcpub.jobs.t:rl`. {% /admonition %}\n",
+        "operationId": "GetJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "ID of the job to retrieve.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishJobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid job ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Possible reasons:\n  - Authorization failed (required scopes and/or roles are missing)\n  - Context tenant cannot be resolved from the access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found with the specified job ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/authoring/publishing/v1/jobs": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Retrieve a list of jobs",
+        "description": "Lists all publishing jobs for a specific tenant, including jobs that are `in progress`, `completed`, `failed`, and so on. This endpoint supports two types of pagination:\n  \n  - Offset pagination\n  - Checkpoint pagination\n\nWhen you use offset pagination, only the first 1000 records are returned. <br> {% admonition type=\"info\" name=\"Note\" %}To retrieve a list of jobs, your token must include one of the following scopes ` xmcpub.jobs.a:r`, `xmcpub.jobs.t:r`, or `xmcpub.jobs.t:rl`. {% /admonition %}\n",
+        "operationId": "GetJobs",
+        "parameters": [
+          {
+            "name": "pageNumber",
+            "in": "query",
+            "description": "The page number of the results to return. The first page is `1`. This parameter must be used only in offset pagination requests as it indicates that offset pagination should be used.",
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "The number of results per page.",
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          },
+          {
+            "name": "x-sc-continuation",
+            "in": "header",
+            "description": "Continuation token value from which to start the selection (checkpoint pagination). The first time you call this endpoint using checkpoint pagination, omit this header.",
+            "schema": {
+              "maxLength": 16384,
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "The source value to use when filtering jobs. Use a pipe to specify multiple values  (for example, `?source=Pages|Sites`). Wildcards are not supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.createdBy.id",
+            "in": "query",
+            "description": "The ID of the creator to use when filtering jobs. Use a pipe to specify multiple values  (for example, `?system.createdBy.id=Qbu3QmWtnQoU0my5jX9MFxBYIeQrFhd2|auth0|000b2fc5fa6b9e5883b6245b`). Wildcards are not supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.createdBy.name",
+            "in": "query",
+            "description": "The name of the creator to use when filtering jobs. Use a pipe to specify multiple values  (for example, `?system.createdBy.name=John+Doe|John+Smith`). Wildcards are not supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.status",
+            "in": "query",
+            "description": "The status value to use when filtering jobs. Use a pipe to specify multiple values (for example, `?system.status=Queued|Running`).",
+            "style": "pipeDelimited",
+            "schema": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "Queued",
+                  "Running",
+                  "Completed",
+                  "Failed",
+                  "Canceled",
+                  "Canceling"
+                ],
+                "type": "string",
+                "description": "The status of a publish job."
+              }
+            }
+          },
+          {
+            "name": "system.queuedTime",
+            "in": "query",
+            "description": "The job queued time to filter entries by. Use `&` to include more than one filter (for example, `?system.queuedTime=>2024-10-14T00:00:00.000Z&system.queuedTime=<2024-12-31T00:00:00.000Z`).  Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.startTime",
+            "in": "query",
+            "description": "The job start time to filter entries by. Use `&` to include more than one filter (for example, `?system.startTime=>2024-10-14T00:00:00.000Z&system.startTime=<2024-12-31T00:00:00.000Z`). Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.finishTime",
+            "in": "query",
+            "description": "The job finish time to filter entries by. Use `&` to include more than one filter (for example, `?system.finishTime=>2024-10-14T00:00:00.000Z&system.finishTime=<2024-12-31T00:00:00.000Z`). Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "description": "Field to sort jobs by. You can specify whether to sort by ascending or descending order, using the format `field:order`, where order can be `1` for ascending or `-1` for descending (for example, `name:1`). The following fields are supported: `name`, `source`, `system.status`, `system.queuedTime`, `system.startTime`, `system.finishTime`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs successfully retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OffsetPagingPublishJobsResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CheckpointPagingPublishJobsResponse"
+                    }
+                  ],
+                  "description": "Represented batch data response."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters in request query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Possible reasons:\n  - Authorization failed (required scopes and/or roles are missing)\n  - Context tenant cannot be resolved from the access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Create a publishing job",
+        "description": "Creates a new publishing job. {% admonition type=\"info\" name=\"Note\" %}To create a publishing job, your token must include one of the following scopes ` xmcpub.jobs.a:w`, `xmcpub.jobs.t:w`, or `xmcpub.jobs.t:wl`. Users with a scope of `xmcpub.jobs.t:wl`  (limited write) must also have `Sitecore Client Advanced Publishing` or `Sitecore Client Publishing`  roles or have the `admin` flag set in XM Cloud.  {% /admonition %} {% admonition type=\"info\" name=\"Note\" %} Client token of applications must have the `xmcloud.cm:admin` scope. {% /admonition %}\n",
+        "operationId": "Create",
+        "requestBody": {
+          "description": "The request for creating the job.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job successfully created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishJobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. Possible reasons: <BR/> - Invalid name <BR/> - Invalid description <BR/> - Invalid items <BR/> - Invalid mode <BR/> - Invalid locales<BR/> - Invalid source <BR/> - Invalid tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request does not contain required scopes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/authoring/publishing/v1/jobs/permissions": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Retrieve permissions",
+        "description": "Lists all permissions assigned to the current user.\n{% admonition type=\"info\" name=\"Note\" %}To retrieve permissions, the token must be valid, but no scope is required. {% /admonition %}\n",
+        "operationId": "GetUserPermissions",
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPermissions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid job ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Possible reasons: <BR/> - Authorization failed (required scopes and/or roles are missing).<BR/> - Context tenant cannot be resolved from the access token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/authoring/publishing/v1/jobs/filters": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Retrieve data for publishing job filters",
+        "description": "Returns data to populate filters for publishing jobs. Returned data is  dynamic and depends on the filters already selected. This operation finds all publishing jobs that match the selected filters and returns distinct values for the `source`, `system.createdBy`, and `system.status` fields of these jobs.\n{% admonition type=\"info\" name=\"Note\" %}To retrieve publishing jobs that match the selected filters, your token must include one of the following scopes `xmcpub.jobs.a:r`, `xmcpub.jobs.t:r`, or `xmcpub.jobs.t:rl`. {% /admonition %}\n",
+        "operationId": "GetJobsFilters",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "description": "The source value to use when filtering jobs. Use a pipe to specify multiple values (for example, `?source=Pages|Sites`). Wildcards are not supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.createdBy.id",
+            "in": "query",
+            "description": "The ID of the creator to use when filtering jobs. Use a pipe to specify multiple values (for example, `?system.createdBy.id=Qbu3QmWtnQoU0my5jX9MFxBYIeQrFhd2|auth0|000b2fc5fa6b9e5883b6245b`). Wildcards are not supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.createdBy.name",
+            "in": "query",
+            "description": "The name of the creator to use when filtering jobs. Use a pipe to specify multiple values (for example, `?system.createdBy.name=John+Doe|John+Smith`). Wildcards are not supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.status",
+            "in": "query",
+            "description": "The status value to use when filtering jobs. Use a pipe to specify multiple values (for example, `?system.status=Queued|Running`).",
+            "style": "pipeDelimited",
+            "schema": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "Queued",
+                  "Running",
+                  "Completed",
+                  "Failed",
+                  "Canceled",
+                  "Canceling"
+                ],
+                "type": "string",
+                "description": "The status of a publish job."
+              }
+            }
+          },
+          {
+            "name": "system.queuedTime",
+            "in": "query",
+            "description": "The job queued time to filter entries by. Use `&` to include more than one filter (for example, `?system.queuedTime=>2024-10-14T00:00:00.000Z&system.queuedTime=<2024-12-31T00:00:00.000Z`). Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.startTime",
+            "in": "query",
+            "description": "The job start time to filter entries by. Use `&` to include more than one filter (for example, `?system.startTime=>2024-10-14T00:00:00.000Z&system.startTime=<2024-12-31T00:00:00.000Z`). Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "system.finishTime",
+            "in": "query",
+            "description": "The job finish time to filter entries by. Use `&` to include more than one filter (for example, `?system.finishTime=>2024-10-14T00:00:00.000Z&system.finishTime=<2024-12-31T00:00:00.000Z`. Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job filters successfully retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishJobFiltersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters in request query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Possible reasons:\n  - Authorization failed (required scopes and/or roles are missing)\n  - Context tenant cannot be resolved from the access token\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/authoring/publishing/v1/jobs/summary": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Retrieve a summary of publishing jobs",
+        "description": "Retrieves statistics about publishing jobs, including how many jobs are queued, how many are running or have failed or been canceled, and how many have been completed.\n{% admonition type=\"info\" name=\"Note\" %}To retrieve job statistics, your token must include one of the following scopes `xmcpub.jobs.a:r`, `xmcpub.jobs.t:r`, or `xmcpub.jobs.t:rl`. {% /admonition %}\n",
+        "operationId": "GetJobsStatistics",
+        "parameters": [
+          {
+            "name": "system.queuedTime",
+            "in": "query",
+            "description": "Queued time to use to filter entries. Use `&` to include more than one filter (for example, `?system.queuedTime=>2024-10-14T00:00:00.000Z&system.queuedTime=<2024-12-31T00:00:00.000Z`). Only `=>DATE` and `=<DATE` filters are supported.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishJobsSummaryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters in request query string",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Possible reasons:\n  - Authorization failed (required scopes and/or roles are missing)\n  - Context tenant cannot be resolved from the access token\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/authoring/publishing/v1/jobs/{jobId}/cancel": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Cancel a publishing job",
+        "description": "Cancels a publishing job with a specific ID.\r\n\r\n\r\n**Note**\r\nTo cancel a publishing job, your token must include one of the following\r\nscopes: `xmcpub.jobs.a:w`, `xmcpub.jobs.t:w`, or `xmcpub.jobs.t:wl`.\r\nUsers with a scope of `xmcpub.jobs.t:wl` (limited write) must also have a\r\n`Sitecore Client Advanced Publishing` or `Sitecore Client Publishing`\r\nroles or have the `admin` flag set in the XM Cloud instance.\r\nIf access token includes only `xmcpub.jobs.t:wl` scope, callers\r\nmust be able to cancel only those publishing job which they started.\r\n\r\n**Note**\r\nClient tokens of applications must\r\nhave the `xmcloud.cm:admin` scope.",
+        "operationId": "CancelJob",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "description": "The ID of the publishing job to cancel, for example `job_AE86B`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Job cancellation successfully requested."
+          },
+          "400": {
+            "description": "Invalid job ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized request or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. Possible reasons: <BR/> - Authorization failed (required scopes and/or roles are missing).<BR/> - Context tenant cannot be resolved from the access token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found with the specified job ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job does not have a `Queued` or `Running` status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Job cancellation is not supported for XM Cloud Content"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CheckpointPagingPublishJobsResponse": {
+        "required": [
+          "data",
+          "next"
+        ],
+        "type": "object",
+        "properties": {
+          "next": {
+            "type": "string",
+            "description": "Continuation token for the next page.",
+            "nullable": true
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublishJobResponse"
+            },
+            "description": "The collection of data for response.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represented batch data response."
+      },
+      "CreateJobRequest": {
+        "required": [
+          "name",
+          "options",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "maxLength": 256,
+            "minLength": 0,
+            "type": "string",
+            "description": "Name of the job."
+          },
+          "source": {
+            "maxLength": 256,
+            "minLength": 0,
+            "type": "string",
+            "description": "Source of the job. This is typically the application name specified as the source (for example, `Pages`, `Sites`, and so on)."
+          },
+          "options": {
+            "$ref": "#/components/schemas/PublishOptionsModel"
+          },
+          "description": {
+            "maxLength": 256,
+            "minLength": 0,
+            "type": "string",
+            "description": "Description of the job.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "The request for creating a job."
+      },
+      "CreatedByData": {
+        "required": [
+          "id",
+          "name",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the creator.",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the creator.",
+            "nullable": true
+          },
+          "type": {
+            "enum": [
+              "Application",
+              "User"
+            ],
+            "type": "string",
+            "description": "The type of the creator."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represents the data for the user who created the job."
+      },
+      "CreatedByDataItem": {
+        "required": [
+          "data"
+        ],
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CreatedByData"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The data item wrapper."
+      },
+      "ItemModel": {
+        "required": [
+          "id",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "maxLength": 50,
+            "minLength": 0,
+            "type": "string",
+            "description": "ID of the item to publish."
+          },
+          "type": {
+            "maxLength": 256,
+            "minLength": 0,
+            "type": "string",
+            "description": "Type of the item to publish (for example, `Page`, `Site`, `Item`, and so on)."
+          },
+          "locale": {
+            "maxLength": 20,
+            "minLength": 0,
+            "type": "string",
+            "description": "Locale of the item to publish. Items can have a locale\r\nequal to `*`, which means that items must be published in all\r\nlanguages. `locale` must be specified for each item or as a list\r\nin `options.xmc.locales`.\r\n<BR />\r\n**Note**\r\nA combination of locale in item and in `options.xmc.locales` is not allowed.\r\n<BR />\r\nValid format is `xx` or `xx-YY`, where `xx` is ISO-639-1 language\r\ncode and `YY` is ISO 3166-1 country code.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represents an item request."
+      },
+      "Items": {
+        "required": [
+          "mode",
+          "publishChildren",
+          "publishRelatedItems"
+        ],
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/XmcPublishingOptionsModel"
+          }
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "Republish",
+              "Smart"
+            ],
+            "type": "string",
+            "description": "Mode of the items publish job."
+          },
+          "publishRelatedItems": {
+            "type": "boolean",
+            "description": "Whether to publish related items."
+          },
+          "publishChildren": {
+            "type": "boolean",
+            "description": "Whether to publish children items recursively."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represents XMC publishing items options model."
+      },
+      "ItemsOptionsModel": {
+        "required": [
+          "mode"
+        ],
+        "type": "object",
+        "properties": {
+          "publishRelatedItems": {
+            "type": "boolean",
+            "description": "Whether to publish related items.",
+            "default": false
+          },
+          "publishChildren": {
+            "type": "boolean",
+            "description": "Whether to publish children items recursively.",
+            "default": false
+          },
+          "mode": {
+            "enum": [
+              "Republish",
+              "Smart"
+            ],
+            "type": "string",
+            "description": "Mode of the items publish job."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represents the items options for publishing."
+      },
+      "JobStatistics": {
+        "type": "object",
+        "properties": {
+          "lastReportTime": {
+            "type": "string",
+            "description": "The last time the statistics were updated.",
+            "format": "date-time"
+          },
+          "itemsSent": {
+            "type": "integer",
+            "description": "The number of items sent.",
+            "format": "int32"
+          },
+          "itemsProcessed": {
+            "type": "integer",
+            "description": "The number of items processed.",
+            "format": "int32"
+          },
+          "itemsFailed": {
+            "type": "integer",
+            "description": "The number of items failed.",
+            "format": "int32"
+          },
+          "xmc": {
+            "$ref": "#/components/schemas/XmcStatistics"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The job statistics."
+      },
+      "OffsetPagingPublishJobsResponse": {
+        "required": [
+          "data",
+          "pageNumber",
+          "pageSize",
+          "totalCount"
+        ],
+        "type": "object",
+        "properties": {
+          "totalCount": {
+            "type": "integer",
+            "description": "The total count of items.",
+            "format": "int32"
+          },
+          "pageNumber": {
+            "type": "integer",
+            "description": "The page number.",
+            "format": "int32"
+          },
+          "pageSize": {
+            "type": "integer",
+            "description": "The page size.",
+            "format": "int32"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublishJobResponse"
+            },
+            "description": "The collection of data for response.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represented batch data response."
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "instance": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": {}
+      },
+      "PublishJobFiltersResponse": {
+        "required": [
+          "createdBy",
+          "sources",
+          "statuses"
+        ],
+        "type": "object",
+        "properties": {
+          "statuses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublishJobStatusDataItem"
+            },
+            "description": "The available statuses for filtering."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceDataItem"
+            },
+            "description": "The unique list of available sources."
+          },
+          "createdBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreatedByDataItem"
+            },
+            "description": "The unique list of jobs creators."
+          }
+        },
+        "additionalProperties": false,
+        "description": "The response for publishing job filters."
+      },
+      "PublishJobResponse": {
+        "required": [
+          "id",
+          "name",
+          "options",
+          "permissions",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the job.",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "description": "The description of the job.",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the job.",
+            "nullable": true
+          },
+          "options": {
+            "$ref": "#/components/schemas/ResponsePublishOptionsModel"
+          },
+          "source": {
+            "type": "string",
+            "description": "The source of the job.",
+            "nullable": true
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/JobStatistics"
+          },
+          "system": {
+            "$ref": "#/components/schemas/SystemData"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PublishingJobPermissions"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The response for creating a job."
+      },
+      "PublishJobStatusData": {
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": [
+              "Queued",
+              "Running",
+              "Completed",
+              "Failed",
+              "Canceled",
+              "Canceling"
+            ],
+            "type": "string",
+            "description": "The job status."
+          }
+        },
+        "additionalProperties": false,
+        "description": "The publish job status data."
+      },
+      "PublishJobStatusDataItem": {
+        "required": [
+          "data"
+        ],
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PublishJobStatusData"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The data item wrapper."
+      },
+      "PublishJobsSummaryResponse": {
+        "required": [
+          "counts"
+        ],
+        "type": "object",
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/StatisticsCounts"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The response for publishing job summary."
+      },
+      "PublishOptionsModel": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemModel"
+            },
+            "description": "Root items to start publishing from.",
+            "nullable": true
+          },
+          "xmc": {
+            "$ref": "#/components/schemas/XmcPublishingModel"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The publish job options."
+      },
+      "PublishingJobPermissions": {
+        "type": "object",
+        "properties": {
+          "canViewDetails": {
+            "type": "boolean",
+            "description": "Whether details of the publishing job can be viewed."
+          },
+          "canCancel": {
+            "type": "boolean",
+            "description": "Whether the publishing job can be canceled."
+          }
+        },
+        "additionalProperties": false,
+        "description": "The permissions of the current user or application to work with the job."
+      },
+      "ResponsePublishOptionsModel": {
+        "type": "object",
+        "properties": {
+          "xmc": {
+            "type": "object",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Items"
+              },
+              {
+                "$ref": "#/components/schemas/Site"
+              }
+            ],
+            "description": "XMC publishing options.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "The options the publishing job was created with."
+      },
+      "Site": {
+        "required": [
+          "mode"
+        ],
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/XmcPublishingOptionsModel"
+          }
+        ],
+        "properties": {
+          "mode": {
+            "enum": [
+              "Republish",
+              "Incremental",
+              "Smart"
+            ],
+            "type": "string",
+            "description": "Mode of the site publish job."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represents XmcPublishingSiteOptionsModel."
+      },
+      "SiteOptionsModel": {
+        "required": [
+          "mode"
+        ],
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "Republish",
+              "Incremental",
+              "Smart"
+            ],
+            "type": "string",
+            "description": "Mode of the items publish job."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Site options for publishing."
+      },
+      "SourceData": {
+        "required": [
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The source value.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "The source data."
+      },
+      "SourceDataItem": {
+        "required": [
+          "data"
+        ],
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourceData"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The data item wrapper."
+      },
+      "StatisticsCounts": {
+        "required": [
+          "canceled",
+          "canceling",
+          "completed",
+          "failed",
+          "queued",
+          "running"
+        ],
+        "type": "object",
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "description": "The total number of jobs queued.",
+            "format": "int32"
+          },
+          "running": {
+            "type": "integer",
+            "description": "The total number of jobs running.",
+            "format": "int32"
+          },
+          "canceled": {
+            "type": "integer",
+            "description": "The total number of jobs canceled.",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "description": "The total number of failed jobs.",
+            "format": "int32"
+          },
+          "completed": {
+            "type": "integer",
+            "description": "The number of completed jobs.",
+            "format": "int32"
+          },
+          "canceling": {
+            "type": "integer",
+            "description": "The number of jobs currently being canceled.",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The job count for every status."
+      },
+      "SystemData": {
+        "required": [
+          "organizationId",
+          "status",
+          "tenantId"
+        ],
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string",
+            "description": "The ID of the organization that the job belongs to.",
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "string",
+            "description": "The ID of the tenant that the job belongs to.",
+            "format": "uuid"
+          },
+          "tenantJobId": {
+            "type": "string",
+            "description": "The job ID on the tenant side.",
+            "nullable": true
+          },
+          "status": {
+            "enum": [
+              "Queued",
+              "Running",
+              "Completed",
+              "Failed",
+              "Canceled",
+              "Canceling"
+            ],
+            "type": "string",
+            "description": "The status of the job."
+          },
+          "queuedTime": {
+            "type": "string",
+            "description": "The time when the job was queued.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "startTime": {
+            "type": "string",
+            "description": "The time when the job was started.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "finishTime": {
+            "type": "string",
+            "description": "The time when the job was finished.",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdBy": {
+            "$ref": "#/components/schemas/User"
+          },
+          "canceledBy": {
+            "$ref": "#/components/schemas/User"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The system data of a job."
+      },
+      "User": {
+        "required": [
+          "id",
+          "name",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of service client.",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of service client.",
+            "nullable": true
+          },
+          "type": {
+            "enum": [
+              "Application",
+              "User"
+            ],
+            "type": "string",
+            "description": "The type of service client."
+          }
+        },
+        "additionalProperties": false,
+        "description": "The service client description."
+      },
+      "UserPermissions": {
+        "type": "object",
+        "properties": {
+          "canReadAll": {
+            "type": "boolean",
+            "description": "Whether the user can read all jobs."
+          },
+          "canReadOwn": {
+            "type": "boolean",
+            "description": "Whether the user can read their own jobs."
+          },
+          "canViewDetailsOfAll": {
+            "type": "boolean",
+            "description": "Whether the user can view details of all jobs."
+          },
+          "canViewDetailsOfOwn": {
+            "type": "boolean",
+            "description": "Whether the user can view details of their own jobs."
+          },
+          "canCreate": {
+            "type": "boolean",
+            "description": "Whether the user can create jobs."
+          }
+        },
+        "additionalProperties": false,
+        "description": "The permissions assigned to a user."
+      },
+      "XmcPublishingModel": {
+        "type": "object",
+        "properties": {
+          "locales": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": " Locales in which content is to be published. This field is required\r\n for XM Cloud site publishing jobs (when `options.xmc.site` is set)\r\n and is optional for XM Cloud items publishing jobs.\r\n <BR />\r\n **Note**\r\n When it is specified for items publishing none of the items should have `locale` set.\r\n<BR />\r\n The format of each element in array must be `xx` or `xx-YY`,\r\n where `xx` is ISO-639-1 language code and `YY` is ISO 3166-1 country code.",
+            "nullable": true
+          },
+          "site": {
+            "$ref": "#/components/schemas/SiteOptionsModel"
+          },
+          "items": {
+            "$ref": "#/components/schemas/ItemsOptionsModel"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Represents a model for XMC publishing."
+      },
+      "XmcPublishingOptionsModel": {
+        "required": [
+          "locales"
+        ],
+        "type": "object",
+        "properties": {
+          "locales": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Locales in which content is to be published."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Base class for XmcPublishingOptionsModel."
+      },
+      "XmcStatistics": {
+        "type": "object",
+        "properties": {
+          "additionalItemsSent": {
+            "type": "integer",
+            "description": "The number of additional items sent.",
+            "format": "int32"
+          },
+          "itemsAcknowledged": {
+            "type": "integer",
+            "description": "The number of items acknowledged.",
+            "format": "int32"
+          },
+          "itemsDeleted": {
+            "type": "integer",
+            "description": "The number of items deleted.",
+            "format": "int32"
+          },
+          "itemsSkipped": {
+            "type": "integer",
+            "description": "The number of items skipped.",
+            "format": "int32"
+          },
+          "itemsSendingComplete": {
+            "type": "boolean",
+            "description": "Indicates whether the sending of items is complete."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Additional fields of the XMC statistics."
+      }
+    },
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "description": "Example: \"abcdef12345\" (w/o Bearer prefix)",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [
+    {
+      "Bearer": []
+    }
+  ]
+}

@@ -7,10 +7,10 @@ const PAGE_SIZE = 12; // 3 rows × 4 columns
 
 type Props = {
   results: ImageResult[];
-  onUseSelected?: (selected: ImageResult[]) => void;
+  onSelectionChange?: (selected: ImageResult[]) => void;
 };
 
-export function ImageResultsPanel({ results, onUseSelected }: Props) {
+export function ImageResultsPanel({ results, onSelectionChange }: Props) {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -20,16 +20,10 @@ export function ImageResultsPanel({ results, onUseSelected }: Props) {
   const pageItems = results.slice(start, end);
 
   function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
-
-  function handleUseSelected() {
-    const items = results.filter((r) => selected.has(r.item_id));
-    onUseSelected?.(items);
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelected(next);
+    onSelectionChange?.(results.filter((r) => next.has(r.item_id)));
   }
 
   return (
@@ -39,14 +33,10 @@ export function ImageResultsPanel({ results, onUseSelected }: Props) {
         <span>
           Showing {start + 1}–{end} of {results.length} image{results.length !== 1 ? "s" : ""}
         </span>
-        {selected.size > 0 && onUseSelected && (
-          <button
-            onClick={handleUseSelected}
-            className="rounded px-2 py-0.5 text-xs font-medium text-white transition-colors"
-            style={{ background: "var(--sc-purple)" }}
-          >
-            Use {selected.size} selected
-          </button>
+        {selected.size > 0 && (
+          <span style={{ color: "var(--sc-purple)" }}>
+            {selected.size} selected — attach a message to send
+          </span>
         )}
       </div>
 

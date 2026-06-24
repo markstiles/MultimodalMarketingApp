@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useChat } from "@/lib/hooks/useChat";
 import { useSitecoreContext } from "@/lib/hooks/useSitecoreContext";
 import type { ImageResult, OptionItem } from "@/lib/types";
@@ -10,6 +10,7 @@ import { MessageList } from "./MessageList";
 export function ChatPanel() {
   const { context, loading: contextLoading, reloadCanvas } = useSitecoreContext();
   const { messages, streaming, toolActivity, canvasReload, loading, error, send, retry } = useChat();
+  const [pendingImages, setPendingImages] = useState<ImageResult[]>([]);
 
   // Reload the Sitecore Pages canvas whenever a write tool completes
   useEffect(() => {
@@ -18,13 +19,17 @@ export function ChatPanel() {
 
   function handleSend(text: string) {
     if (!context) return;
-    send(text, context);
+    let message = text;
+    if (pendingImages.length > 0) {
+      const paths = pendingImages.map((r) => r.media_path).join(", ");
+      message = `[Selected images: ${paths}]\n\n${text}`;
+      setPendingImages([]);
+    }
+    send(message, context);
   }
 
-  function handleUseImages(selected: ImageResult[]) {
-    if (!context) return;
-    const paths = selected.map((r) => r.media_path).join(", ");
-    send(`Use these images: ${paths}`, context);
+  function handleImagesSelected(items: ImageResult[]) {
+    setPendingImages(items);
   }
 
   function handleSelectOption(item: OptionItem) {
@@ -34,7 +39,14 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full bg-white" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <MessageList messages={messages} streaming={streaming} toolActivity={toolActivity} loading={loading} onUseImages={handleUseImages} onSelectOption={handleSelectOption} />
+      <MessageList
+        messages={messages}
+        streaming={streaming}
+        toolActivity={toolActivity}
+        loading={loading}
+        onImagesSelected={handleImagesSelected}
+        onSelectOption={handleSelectOption}
+      />
 
       {error && (
         <div
@@ -54,6 +66,8 @@ export function ChatPanel() {
       <ChatInput
         onSend={handleSend}
         disabled={loading || contextLoading || !context}
+        pendingImages={pendingImages}
+        onClearImages={() => setPendingImages([])}
       />
     </div>
   );

@@ -3,6 +3,7 @@ import os
 
 import httpx
 
+from app.services._api_endpoint import api_endpoint
 from app.services.sitecore_auth import get_sitecore_automation_token
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+@api_endpoint(exposed=True, category="briefs")
 async def list_brief_types() -> list[dict]:
     """Return all available brief types from GET /api/v1/brief/brief-types."""
     token = await get_sitecore_automation_token()
@@ -25,6 +27,7 @@ async def list_brief_types() -> list[dict]:
     return data.get("items", data) if isinstance(data, dict) else data
 
 
+@api_endpoint(exposed=True, category="briefs")
 async def generate_brief(brief_type_id: str, brand_id: str, prompt: str) -> dict:
     """AI-generate brief field content via POST /api/v1/brief/generate.
 
@@ -40,6 +43,7 @@ async def generate_brief(brief_type_id: str, brand_id: str, prompt: str) -> dict
     return resp.json()
 
 
+@api_endpoint(exposed=True, category="briefs")
 async def create_brief(
     name: str,
     brief_type_id: str,
@@ -67,6 +71,7 @@ async def create_brief(
     return resp.json()
 
 
+@api_endpoint(exposed=True, category="briefs")
 async def get_brief(brief_id: str) -> dict:
     """Retrieve a saved brief by ID via GET /api/v1/brief/{brief_id}.
 
@@ -94,6 +99,7 @@ async def get_brief(brief_id: str) -> dict:
     return resp.json()
 
 
+@api_endpoint(exposed=True, category="briefs")
 async def update_brief(brief_id: str, name: str | None = None, fields: dict | None = None) -> dict:
     """Partially update a brief via PUT /api/v1/brief/{brief_id}.
 
@@ -112,10 +118,11 @@ async def update_brief(brief_id: str, name: str | None = None, fields: dict | No
     return resp.json()
 
 
+@api_endpoint(exposed=True, category="briefs")
 async def list_briefs(
     name: str | None = None,
     status: str | None = None,
-    type_id: str | None = None,
+    brief_type_id: str | None = None,
 ) -> list[dict]:
     """List briefs via GET /api/v1/brief with optional filters."""
     token = await get_sitecore_automation_token()
@@ -125,8 +132,8 @@ async def list_briefs(
         params["name"] = name
     if status:
         params["status"] = status
-    if type_id:
-        params["type_id"] = type_id
+    if brief_type_id:
+        params["type_id"] = brief_type_id
     async with httpx.AsyncClient(timeout=15) as http:
         resp = await http.get(url, params=params, headers=_headers(token))
     resp.raise_for_status()
@@ -149,6 +156,29 @@ async def list_briefs(
         logger.info("list_briefs first item keys: %s", list(items[0].keys()))
 
     return items
+
+
+@api_endpoint(exposed=False, category="briefs")
+async def delete_brief(brief_id: str) -> dict:
+    """Delete a brief by ID via DELETE /api/v1/brief/{brief_id}.
+
+    Returns {success, brief_id} on success or {success, error} on failure.
+    """
+    token = await get_sitecore_automation_token()
+    url = f"{_AGENT_API_BASE}/api/v1/brief/{brief_id}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.delete(url, headers=_headers(token))
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Brief '{brief_id}' not found."}
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error("delete_brief HTTP %d (id=%s): %s", exc.response.status_code, brief_id, exc.response.text)
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.error("delete_brief error: %s", exc)
+        return {"success": False, "error": str(exc)}
+    return {"success": True, "brief_id": brief_id}
 
 
 def brief_fields_to_text(fields: dict) -> str:

@@ -3,12 +3,16 @@ import logging
 from langchain_core.tools import tool
 
 from app.services.sites_service import (
-    add_site_language as _svc_add_language,
+    add_environment_language as _svc_add_language,
+    create_collection as _svc_create_collection,
     create_site as _svc_create_site,
+    delete_environment_language as _svc_delete_language,
+    delete_site as _svc_delete_site,
     get_environment_languages as _svc_get_env_languages,
     get_site_info,
     get_site_languages as _svc_get_languages,
     get_site_templates as _svc_get_templates,
+    list_collections as _svc_list_collections,
     list_sites as _svc_list_sites,
     validate_site_name as _svc_validate_name,
 )
@@ -56,6 +60,9 @@ async def list_site_languages(site_id: str) -> dict:
         site_id: Site identifier from session context
 
     Returns a list of language objects and total count, or success=False on error.
+    If the user is choosing a language, you MUST immediately call `present_options`
+    after this tool returns — do NOT write a prose list.
+    Format each as: {"id": isoCode, "label": isoCode}
     """
     try:
         auth_token = await get_sitecore_automation_token()
@@ -75,6 +82,9 @@ async def list_all_sites() -> dict:
     name, and collection (organisational grouping).
 
     Returns a list of site objects with total count, or success=False on error.
+    If the user is choosing which site to work with, you MUST immediately call
+    `present_options` after this tool returns — do NOT write a prose list.
+    Format each site as: {"id": site_id, "label": site_name, "metadata": collection_name}
     """
     try:
         auth_token = await get_sitecore_automation_token()
@@ -98,7 +108,10 @@ async def get_environment_languages(environment_id: str) -> dict:
                         "Default") — use the environment value from the Pages editor
                         context, or ask the marketer if unknown
 
-    Returns a list of language objects with isoCode, label, and count.
+    Returns a list of language objects. After this tool returns, you MUST immediately
+    call `present_options` to display the languages as clickable buttons — do NOT
+    write a prose list. Format each as:
+      {"id": isoCode, "label": language_label}
     """
     try:
         auth_token = await get_sitecore_automation_token()
@@ -121,9 +134,10 @@ async def get_site_templates(environment_id: str) -> dict:
                         "Default") — use the environment value from the Pages editor
                         context, or ask the marketer if unknown
 
-    Returns a list of templates. Each entry has:
-      - template_id: the UUID to pass to validate_site_name and create_marketing_site
-      - template_name: the human-readable label to show the marketer
+    Returns a list of templates. After this tool returns, you MUST immediately call
+    `present_options` to display the templates as clickable buttons — do NOT write
+    a prose list. Format each template as:
+      {"id": template_id, "label": template_name, "description": "...description..."}
     NEVER pass template_name as the template_id — the API will reject it.
     """
     try:
@@ -203,18 +217,119 @@ async def create_marketing_site(
 
 
 @tool
-async def add_language_to_site(site_id: str, language: str) -> dict:
+async def delete_marketing_site(site_id: str) -> dict:
     """
-    Add a language/locale to a site.
+    Permanently delete a Sitecore XM Cloud site.
 
-    Use when enabling a new locale for a targeted campaign or preparing a
-    multilingual marketing microsite. The language must be a BCP 47 code
-    (e.g. "en", "fr-FR", "de-DE", "ja-JP").
+    This action is IRREVERSIBLE — all pages, content, and settings for the site
+    will be removed. ONLY call this tool after:
+      1. The user has received an explicit warning that deletion cannot be undone.
+      2. The user has confirmed they want to proceed with deletion.
 
-    Returns an error if the language is already configured on the site.
+    Use get_site_context or list_all_sites to resolve a site name to its ID before
+    calling this tool. NEVER invent a site_id.
 
     Args:
-        site_id: Site identifier from session context
+        site_id: Site identifier (UUID) from list_all_sites or session context
+
+    Returns success status and the deleted site_id, or success=False with an error.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    return await _svc_delete_site(site_id, auth_token)
+
+
+@tool
+async def list_site_collections() -> dict:
+    """
+    List all site collections (organisational groupings) in the current organisation.
+
+    Use this to present available collections when creating a new site, or to
+    help the marketer understand how existing sites are organised.
+
+    Returns a list of collection objects with id, name, and description, plus a count.
+    If the user is choosing a collection, you MUST immediately call `present_options`
+    after this tool returns — do NOT write a prose list.
+    Format each as: {"id": collection_id, "label": collection_name}
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "collections": [], "error": str(exc)}
+
+    return await _svc_list_collections(auth_token)
+
+
+@tool
+async def create_site_collection(name: str) -> dict:
+    """
+    Create a new, empty site collection (organisational grouping).
+
+    Use this when the marketer wants to create a standalone collection before
+    adding sites to it. This is an alternative to letting create_marketing_site
+    auto-create the collection — prefer this explicit path when the collection
+    should exist independently first.
+
+    NOTE: Sitecore may return a 409 "already exists" error for a collection that
+    was previously auto-created as a side effect of a site creation, even if the
+    collection does not yet appear in list_site_collections. If that happens, call
+    list_site_collections to confirm — the collection should be visible within a
+    few seconds.
+
+    Args:
+        name: URL-safe collection name confirmed by the marketer (e.g. "acme-corp")
+
+    Returns {success, id, name} on success or {success, error} on failure.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    return await _svc_create_collection(name, auth_token)
+
+
+@tool
+async def remove_language_from_site(language: str) -> dict:
+    """
+    Remove a language/locale from the environment.
+
+    Languages are managed at the environment level, not per-site. Use when a
+    language was added in error or a locale is being retired.
+    The language must have no published content before it can be removed.
+
+    This action is IRREVERSIBLE for that language's content. ONLY call after the
+    marketer has confirmed they want to remove the language.
+
+    Args:
+        language: BCP 47 language/locale code to remove (e.g. "fr-FR", "de-DE")
+
+    Returns success status and the removed language code, or success=False with
+    a descriptive error.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    return await _svc_delete_language(language, auth_token)
+
+
+@tool
+async def add_language_to_site(language: str) -> dict:
+    """
+    Add a language/locale to the environment.
+
+    Languages are managed at the environment level, not per-site. Use when
+    enabling a new locale for multilingual sites. The language must be a BCP 47
+    code (e.g. "en", "fr-FR", "de-DE", "ja-JP").
+
+    Returns an error if the language is already configured in the environment.
+
+    Args:
         language: BCP 47 language/locale code to add (e.g. "fr-FR", "de-DE")
 
     Returns success status and the added language code, or success=False with
@@ -223,6 +338,6 @@ async def add_language_to_site(site_id: str, language: str) -> dict:
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
-        return {"success": False, "error": str(exc), "site_id": site_id}
+        return {"success": False, "error": str(exc)}
 
-    return await _svc_add_language(site_id, language, auth_token)
+    return await _svc_add_language(language, auth_token)

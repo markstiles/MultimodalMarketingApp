@@ -11,17 +11,25 @@ export function OptionsPanel({ options, onSelect }: Props) {
   const { items, prompt, option_type } = options;
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-background/50 p-3">
+    <div className="mt-2 p-1">
       {prompt && (
-        <p className="mb-3 text-sm font-medium text-foreground">{prompt}</p>
+        <p className="mb-2 text-xs font-medium" style={{ color: "#374151" }}>{prompt}</p>
       )}
       <div className="flex flex-wrap gap-2">
         {items.map((item) => (
           <button
             key={item.id}
             onClick={() => onSelect(item)}
-            className="group flex flex-col items-start gap-0.5 rounded-md border border-border bg-card px-3 py-2 text-left text-sm shadow-sm transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            title={item.description}
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2"
+            style={{ background: "var(--sc-purple-light)", color: "var(--sc-purple)" }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--sc-purple-hover)";
+              e.currentTarget.style.color = "#ffffff";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "var(--sc-purple-light)";
+              e.currentTarget.style.color = "var(--sc-purple)";
+            }}
           >
             {item.thumbnail && option_type === "image" && (
               <img
@@ -31,15 +39,7 @@ export function OptionsPanel({ options, onSelect }: Props) {
                 loading="lazy"
               />
             )}
-            <span className="font-medium text-foreground group-hover:text-primary">
-              {item.label}
-            </span>
-            {item.description && (
-              <span className="text-xs text-muted-foreground">{item.description}</span>
-            )}
-            {item.metadata && (
-              <span className="text-xs text-muted-foreground/70">{item.metadata}</span>
-            )}
+            {item.label}
           </button>
         ))}
       </div>

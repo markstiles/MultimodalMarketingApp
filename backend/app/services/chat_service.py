@@ -42,6 +42,7 @@ _TASK_SIGNALS: dict[str, list[str]] = {
     "site-management": [
         "create a site", "create site", "new site", "set up a site", "provision a site",
         "add a site", "create a microsite", "deploy a site",
+        "delete a site", "delete site", "remove a site", "remove site",
         "site template", "site language", "site collection",
         "list sites", "show sites", "available sites",
     ],

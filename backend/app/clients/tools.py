@@ -1,6 +1,7 @@
 from langchain_core.tools import BaseTool
 
 from app.clients.brief import (
+    delete_campaign_brief,
     find_campaign_brief,
     generate_campaign_brief,
     get_brief_types,
@@ -24,11 +25,15 @@ from app.clients.marketing_research import search_market_research
 from app.clients.sites import (
     add_language_to_site,
     create_marketing_site,
+    create_site_collection,
+    delete_marketing_site,
     get_environment_languages,
     get_site_context,
     get_site_templates,
     list_all_sites,
+    list_site_collections,
     list_site_languages,
+    remove_language_from_site,
     validate_site_name,
 )
 from app.clients.pages_api import (
@@ -64,12 +69,16 @@ def get_all_tools() -> list[BaseTool]:
         get_phase_artifact_content,
         get_site_context,
         list_all_sites,
+        list_site_collections,
+        create_site_collection,
         get_site_templates,
         get_environment_languages,
         validate_site_name,
         create_marketing_site,
+        delete_marketing_site,
         list_site_languages,
         add_language_to_site,
+        remove_language_from_site,
         search_market_research,
         list_org_brand_kits,
         get_brand_voice_summary,
@@ -93,5 +102,6 @@ def get_all_tools() -> list[BaseTool]:
         get_campaign_brief,
         update_campaign_brief,
         find_campaign_brief,
+        delete_campaign_brief,
         present_options,
     ]

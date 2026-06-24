@@ -5,6 +5,7 @@ from langchain_core.tools import tool
 from app.services.brief_service import (
     brief_fields_to_text,
     create_brief,
+    delete_brief,
     generate_brief,
     get_brief,
     list_brief_types,
@@ -24,7 +25,10 @@ async def get_brief_types() -> dict:
     brief types are available (e.g. product launch, event, seasonal campaign).
     The returned IDs are required for generate_campaign_brief and save_campaign_brief.
 
-    Returns a list of brief types with their id, name, label, and description.
+    Returns a list of brief types. After this tool returns, you MUST immediately
+    call `present_options` to display them as clickable buttons — do NOT list
+    them in prose. Format each as:
+      {"id": brief_type_id, "label": name_or_label, "description": "..."}
     """
     try:
         items = await list_brief_types()
@@ -169,6 +173,27 @@ async def update_campaign_brief(
 
 
 @tool
+async def delete_campaign_brief(brief_id: str) -> dict:
+    """
+    Permanently delete a campaign brief from the Sitecore Agents API.
+
+    This action is IRREVERSIBLE. ONLY call this after the marketer has confirmed
+    they want to delete the brief. Use find_campaign_brief to resolve a brief name
+    to its ID before calling — NEVER invent a brief_id.
+
+    Args:
+        brief_id: Brief ID from save_campaign_brief or find_campaign_brief
+
+    Returns success status and the deleted brief_id, or success=False with an error.
+    """
+    try:
+        return await delete_brief(brief_id)
+    except Exception as exc:
+        logger.error("delete_brief failed: %s", exc)
+        return {"success": False, "error": str(exc), "brief_id": brief_id}
+
+
+@tool
 async def find_campaign_brief(name: str | None = None, status: str | None = None) -> dict:
     """
     Search for existing campaign briefs in the Sitecore Agents API.
@@ -181,6 +206,9 @@ async def find_campaign_brief(name: str | None = None, status: str | None = None
         status: Filter by status — e.g. "Draft" or "Active" (optional)
 
     Returns a list of matching briefs with their id, name, status, and locale.
+    If the user is selecting a brief to work with, you MUST immediately call
+    `present_options` after this tool returns — do NOT write a prose list.
+    Format each as: {"id": brief_id, "label": name, "metadata": status}
     """
     try:
         items = await list_briefs(name=name, status=status)

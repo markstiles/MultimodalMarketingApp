@@ -10,11 +10,11 @@ import { OptionsPanel } from "./OptionsPanel";
 type Props = {
   message?: Message;
   streaming?: string;
-  onUseImages?: (selected: ImageResult[]) => void;
+  onImagesSelected?: (selected: ImageResult[]) => void;
   onSelectOption?: (item: OptionItem) => void;
 };
 
-export function MessageBubble({ message, streaming, onUseImages, onSelectOption }: Props) {
+export function MessageBubble({ message, streaming, onImagesSelected, onSelectOption }: Props) {
   const isUser = message?.role === "user";
   const hasImageResults = !!(message?.imageResults && message.imageResults.length > 0);
   const hasOptions = !!(message?.options && message.options.items.length > 0);
@@ -44,7 +44,7 @@ export function MessageBubble({ message, streaming, onUseImages, onSelectOption 
           {message?.imageResults && message.imageResults.length > 0 && (
             <ImageResultsPanel
               results={message.imageResults}
-              onUseSelected={onUseImages}
+              onSelectionChange={onImagesSelected}
             />
           )}
           {hasOptions && onSelectOption && (

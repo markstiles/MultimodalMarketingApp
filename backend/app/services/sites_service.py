@@ -1,7 +1,10 @@
+import asyncio
 import logging
 import os
 
 import httpx
+
+from app.services._api_endpoint import api_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +107,7 @@ async def _resolve_collection(item: dict, auth_token: str) -> str:
     return name
 
 
+@api_endpoint(exposed=False, category="sites")
 async def get_site_info(site_id: str, auth_token: str) -> dict:
     """Return site name and collection for a given site_id.
 
@@ -146,6 +150,7 @@ def _clear_site_cache() -> None:
     _collection_cache.clear()
 
 
+@api_endpoint(exposed=True, category="sites")
 async def get_site_languages(site_id: str, auth_token: str) -> dict:
     """Return all languages configured for a site.
 
@@ -190,6 +195,7 @@ async def get_site_languages(site_id: str, auth_token: str) -> dict:
     }
 
 
+@api_endpoint(exposed=True, category="sites")
 async def list_sites(auth_token: str) -> dict:
     """Return all sites accessible to the current auth token.
 
@@ -220,6 +226,7 @@ async def list_sites(auth_token: str) -> dict:
     return {"success": True, "sites": sites, "count": len(sites)}
 
 
+@api_endpoint(exposed=True, category="sites")
 async def get_site_templates(environment_id: str, auth_token: str) -> dict:
     """Return available site templates for the given environment.
 
@@ -257,6 +264,7 @@ async def get_site_templates(environment_id: str, auth_token: str) -> dict:
     return {"success": True, "templates": templates, "count": len(templates)}
 
 
+@api_endpoint(exposed=True, category="sites")
 async def get_environment_languages(environment_id: str, auth_token: str) -> dict:
     """Return all languages available in the given environment.
 
@@ -292,6 +300,7 @@ async def get_environment_languages(environment_id: str, auth_token: str) -> dic
     return {"success": True, "languages": languages, "count": len(languages)}
 
 
+@api_endpoint(exposed=False, category="sites")
 async def validate_site_name(
     site_name: str,
     language: str,
@@ -349,6 +358,49 @@ async def validate_site_name(
     return {"success": True, "valid": True, "site_name": site_name}
 
 
+async def _poll_job(handle: str, auth_token: str, *, max_wait: int = 60, interval: float = 2.0) -> dict:
+    """Poll GET /api/v1/jobs/{handle}/status until Completed or Failed, or timeout."""
+    jobs_url = f"{_get_api_base_url()}/jobs/{handle}/status"
+    elapsed = 0.0
+    while elapsed < max_wait:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(jobs_url, headers=_auth_headers(auth_token))
+        resp.raise_for_status()
+        job = resp.json()
+        status = job.get("status", "")
+        if status == "Completed":
+            return job
+        if status == "Failed":
+            raise RuntimeError(f"Site creation job failed (handle={handle!r})")
+        await asyncio.sleep(interval)
+        elapsed += interval
+    raise RuntimeError(f"Site creation job timed out after {max_wait}s (handle={handle!r})")
+
+
+async def _find_site_by_name(name: str, auth_token: str) -> dict:
+    """Return {id, name, collection} for a site matching name, or {} if not found."""
+    base_url = _get_base_url()
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(base_url, headers=_auth_headers(auth_token))
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logger.warning("_find_site_by_name: listing failed: %s", exc)
+        return {}
+    sites = data if isinstance(data, list) else data.get("data") or data.get("sites") or []
+    lower_name = name.lower()
+    for site in sites:
+        if isinstance(site, dict) and (site.get("name") or "").lower() == lower_name:
+            return {
+                "id": site.get("id", ""),
+                "name": site.get("name", name),
+                "collection": _collection_from_fields(site),
+            }
+    return {}
+
+
+@api_endpoint(exposed=False, category="sites")
 async def create_site(
     name: str,
     collection: str,
@@ -403,45 +455,363 @@ async def create_site(
         logger.warning("Failed to create site %s: %s", name, exc)
         return {"success": False, "error": str(exc)}
 
+    handle = data.get("handle")
+    if not handle:
+        # Unexpected — API returned a body without a job handle; try direct field parse as fallback
+        logger.warning("create_site: no job handle in response, attempting direct field parse: %s", data)
+        result = {
+            "success": True,
+            "id": data.get("id", ""),
+            "name": data.get("name") or data.get("siteName") or name,
+            "collection": await _resolve_collection(data, auth_token) or collection,
+        }
+        if result["id"]:
+            _site_cache[result["id"]] = result
+        return result
+
+    # POST /api/v1/sites returns a JobResponse — poll until the site creation job completes
+    try:
+        job = await _poll_job(handle, auth_token)
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    # Job completed — look up the newly created site by name to retrieve its ID
+    site = await _find_site_by_name(name, auth_token)
+    if not site.get("id"):
+        logger.warning("create_site: job completed but site %r not found in listing", name)
+        return {
+            "success": True,
+            "id": "",
+            "name": name,
+            "collection": job.get("siteCollection") or collection,
+            "warning": "Site was created but its ID could not be resolved — refresh the site list",
+        }
+
     result = {
         "success": True,
-        "id": data.get("id", ""),
-        "name": data.get("name") or data.get("siteName") or name,
-        "collection": await _resolve_collection(data, auth_token) or collection,
+        "id": site["id"],
+        "name": site["name"],
+        "collection": site["collection"] or job.get("siteCollection") or collection,
     }
-    if result["id"]:
-        _site_cache[result["id"]] = result
+    _site_cache[result["id"]] = result
     return result
 
 
-async def add_site_language(site_id: str, language: str, auth_token: str) -> dict:
-    """Add a language/locale to a site.
+@api_endpoint(exposed=False, category="sites")
+async def delete_site(site_id: str, auth_token: str) -> dict:
+    """Permanently delete a Sitecore XM Cloud site by its ID.
 
-    `language` should be a BCP 47 code such as "en", "fr-FR", or "de-DE".
-    Returns {success, site_id, language} on success or {success, error} on failure.
-    Returns a descriptive error if the language already exists (HTTP 409).
+    Returns {success, site_id} on success or {success, error} on failure.
+    A 404 means the site was not found.
     """
     base_url = _get_base_url()
     try:
-        async with httpx.AsyncClient(timeout=15) as http:
-            resp = await http.post(
-                f"{base_url}/{site_id}/languages",
-                json={"language": language},
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.delete(
+                f"{base_url}/{site_id}",
                 headers=_auth_headers(auth_token),
             )
         if resp.status_code == 404:
             return {"success": False, "error": f"Site not found: {site_id!r}"}
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error("delete_site HTTP %d (site_id=%s): %s", exc.response.status_code, site_id, exc.response.text)
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except httpx.TimeoutException:
+        return {"success": False, "error": f"Timed out deleting site {site_id!r}"}
+    except Exception as exc:
+        logger.warning("Failed to delete site %s: %s", site_id, exc)
+        return {"success": False, "error": str(exc)}
+
+    _site_cache.pop(site_id, None)
+    return {"success": True, "site_id": site_id}
+
+
+@api_endpoint(exposed=True, category="sites")
+async def add_environment_language(language: str, auth_token: str) -> dict:
+    """Add a language to the environment via POST /api/v1/languages.
+
+    Languages are managed at the environment level, not per-site.
+    `language` is a BCP 47 code such as "en", "fr-FR", or "de-DE".
+    The code is split into languageCode + regionCode as required by AddLanguageModel.
+    Returns {success, language} on success or {success, error} on failure.
+    Returns a descriptive error if the language already exists (HTTP 409).
+    """
+    url = _get_languages_base_url()
+    parts = language.split("-", 1)
+    body: dict = {"languageCode": parts[0]}
+    if len(parts) > 1:
+        body["regionCode"] = parts[1]
+        body["name"] = language
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(url, json=body, headers=_auth_headers(auth_token))
         if resp.status_code == 409:
-            return {
-                "success": False,
-                "error": f"Language {language!r} already exists on site {site_id!r}",
-            }
+            return {"success": False, "error": f"Language {language!r} already exists in this environment"}
         resp.raise_for_status()
         data = resp.json() if resp.content else {}
     except httpx.TimeoutException:
-        return {"success": False, "error": f"Timed out adding language {language!r} to site {site_id!r}"}
+        return {"success": False, "error": f"Timed out adding language {language!r} to the environment"}
+    except httpx.HTTPStatusError as exc:
+        logger.error("add_environment_language HTTP %d (%s): %s", exc.response.status_code, language, exc.response.text)
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
     except Exception as exc:
-        logger.warning("Failed to add language %s to site %s: %s", language, site_id, exc)
+        logger.warning("Failed to add language %s to environment: %s", language, exc)
         return {"success": False, "error": str(exc)}
 
-    return {"success": True, "site_id": site_id, "language": language, "data": data}
+    return {"success": True, "language": language, "data": data}
+
+
+@api_endpoint(exposed=True, category="sites")
+async def update_site(
+    site_id: str,
+    updates: dict,
+    auth_token: str,
+) -> dict:
+    """Update site settings via PUT /api/v1/sites/{id}.
+
+    Args:
+        site_id: Site identifier (UUID)
+        updates: Fields to update — known keys: displayName, language.
+                 Any fields accepted by the API can be included.
+
+    Returns {success, id, name} on success or {success, error} on failure.
+    """
+    base_url = _get_base_url()
+    normalized_id = _normalize_guid(site_id)
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.put(
+                f"{base_url}/{normalized_id}",
+                json=updates,
+                headers=_auth_headers(auth_token),
+            )
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Site not found: {site_id!r}"}
+        resp.raise_for_status()
+        data = resp.json() if resp.content else updates
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "update_site HTTP %d (site_id=%s payload=%s): %s",
+            exc.response.status_code, site_id, updates, exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except httpx.TimeoutException:
+        return {"success": False, "error": f"Timed out updating site {site_id!r}"}
+    except Exception as exc:
+        logger.warning("Failed to update site %s: %s", site_id, exc)
+        return {"success": False, "error": str(exc)}
+
+    _site_cache.pop(site_id, None)
+    d = data.get("data", data) if isinstance(data, dict) else {}
+    return {
+        "success": True,
+        "id": d.get("id", site_id),
+        "name": d.get("name") or d.get("siteName") or site_id,
+    }
+
+
+@api_endpoint(exposed=False, category="sites")
+async def delete_environment_language(language: str, auth_token: str) -> dict:
+    """Remove a language from the environment via DELETE /api/v1/languages/{isoCode}.
+
+    Returns {success, language} on success or {success, error} on failure.
+    """
+    url = f"{_get_languages_base_url()}/{language}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.delete(url, headers=_auth_headers(auth_token))
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Language {language!r} not found in the environment"}
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "delete_environment_language HTTP %d (%s): %s",
+            exc.response.status_code, language, exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except httpx.TimeoutException:
+        return {"success": False, "error": f"Timed out removing language {language!r} from the environment"}
+    except Exception as exc:
+        logger.warning("Failed to delete language %s from environment: %s", language, exc)
+        return {"success": False, "error": str(exc)}
+
+    return {"success": True, "language": language}
+
+
+@api_endpoint(exposed=True, category="sites")
+async def list_collections(auth_token: str) -> dict:
+    """Return all site collections via GET /api/v1/collections.
+
+    Returns {success, collections, count}. Each collection has id and name.
+    """
+    url = _get_collections_base_url()
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(url, headers=_auth_headers(auth_token))
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("list_collections HTTP %d: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "collections": [], "error": str(exc)}
+    except Exception as exc:
+        logger.warning("list_collections error: %s", exc)
+        return {"success": False, "collections": [], "error": str(exc)}
+
+    raw = (
+        data if isinstance(data, list)
+        else data.get("data") or data.get("items") or data.get("collections") or []
+    )
+    collections = [
+        {
+            "id": c.get("id", ""),
+            "name": c.get("name") or c.get("collectionName") or "",
+            "description": c.get("description", ""),
+        }
+        for c in (raw if isinstance(raw, list) else [])
+    ]
+    return {"success": True, "collections": collections, "count": len(collections)}
+
+
+@api_endpoint(exposed=False, category="sites")
+async def get_collection(collection_id: str, auth_token: str) -> dict:
+    """Return details for a collection via GET /api/v1/collections/{id}.
+
+    Returns {success, id, name} on success or {success, error} on failure.
+    """
+    url = f"{_get_collections_base_url()}/{collection_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(url, headers=_auth_headers(auth_token))
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Collection not found: {collection_id!r}"}
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "get_collection HTTP %d (id=%s): %s",
+            exc.response.status_code, collection_id, exc.response.text,
+        )
+        return {"success": False, "error": str(exc)}
+    except Exception as exc:
+        logger.warning("get_collection error: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    d = data.get("data", data) if isinstance(data, dict) else data
+    return {
+        "success": True,
+        "id": d.get("id", collection_id),
+        "name": d.get("name") or d.get("collectionName") or collection_id,
+        "description": d.get("description", ""),
+    }
+
+
+@api_endpoint(exposed=True, category="sites")
+async def create_collection(name: str, auth_token: str) -> dict:
+    """Create a site collection via POST /api/v1/collections.
+
+    Note: Providing a new collectionName when creating a site auto-creates the
+    collection — only call this when you need an empty collection first.
+
+    Returns {success, id, name} on success or {success, error} on failure.
+    A 409 means the collection name already exists.
+    """
+    url = _get_collections_base_url()
+    body = {"name": name}
+    try:
+        async with httpx.AsyncClient(timeout=20) as http:
+            resp = await http.post(url, json=body, headers=_auth_headers(auth_token))
+        if resp.status_code == 409:
+            return {
+                "success": False,
+                "error": (
+                    f"Collection {name!r} already exists (or was recently auto-created as "
+                    "part of a site creation and may not yet be visible in list_site_collections). "
+                    "Call list_site_collections to confirm — if it does not appear, wait a moment "
+                    "and try again."
+                ),
+            }
+        resp.raise_for_status()
+        data = resp.json() if resp.content else {}
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "create_collection HTTP %d (body=%s): %s",
+            exc.response.status_code, body, exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.warning("create_collection error: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    d = data.get("data", data) if isinstance(data, dict) else {}
+    name_result = d.get("name") or d.get("collectionName") or name
+    result = {"success": True, "id": d.get("id", ""), "name": name_result}
+    if result["id"]:
+        _collection_cache[result["id"]] = name_result
+    return result
+
+
+@api_endpoint(exposed=True, category="sites")
+async def update_collection(
+    collection_id: str,
+    name: str,
+    auth_token: str,
+) -> dict:
+    """Rename a collection via POST /api/v1/collections/{id}/rename.
+
+    Returns {success, id, name} on success or {success, error} on failure.
+    """
+    url = f"{_get_collections_base_url()}/{collection_id}/rename"
+    body = {"name": name}
+    try:
+        async with httpx.AsyncClient(timeout=20) as http:
+            resp = await http.post(url, json=body, headers=_auth_headers(auth_token))
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Collection not found: {collection_id!r}"}
+        resp.raise_for_status()
+        data = resp.json() if resp.content else {}
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "update_collection HTTP %d (id=%s body=%s): %s",
+            exc.response.status_code, collection_id, body, exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.warning("update_collection error: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    _collection_cache.pop(collection_id, None)
+    d = data.get("data", data) if isinstance(data, dict) else {}
+    return {
+        "success": True,
+        "id": d.get("id", collection_id),
+        "name": d.get("name") or d.get("collectionName") or name,
+    }
+
+
+@api_endpoint(exposed=False, category="sites")
+async def delete_collection(collection_id: str, auth_token: str) -> dict:
+    """Permanently delete a collection via DELETE /api/v1/collections/{id}.
+
+    All sites within the collection must be deleted first.
+    Returns {success, collection_id} on success or {success, error} on failure.
+    """
+    url = f"{_get_collections_base_url()}/{collection_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.delete(url, headers=_auth_headers(auth_token))
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Collection not found: {collection_id!r}"}
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "delete_collection HTTP %d (id=%s): %s",
+            exc.response.status_code, collection_id, exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.warning("delete_collection error: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    _collection_cache.pop(collection_id, None)
+    return {"success": True, "collection_id": collection_id}

@@ -2,6 +2,7 @@ import logging
 
 from langchain_core.tools import tool
 
+from app.services._api_endpoint import TOOL_TIER_COMPOSITE, TOOL_TIER_DIRECT
 from app.services.pages_service import (
     create_page_api,
     create_page_version_api,
@@ -29,7 +30,7 @@ async def search_pages(
     subtree rooted at root_page_id. Returns up to 20 matches with page_id,
     display_name, and parent_path. If has_more is True, refine the query.
 
-    Use this to obtain a valid page_id before calling get_insert_options or create_page.
+    Use this to obtain a valid page_id before calling create_page.
     NEVER invent a page_id — always use one returned by this tool.
 
     BOOTSTRAPPING the home page (required before any page creation):
@@ -53,6 +54,9 @@ async def search_pages(
     return await search_pages_api(root_page_id, query, language, auth_token)
 
 
+search_pages._tier = TOOL_TIER_DIRECT
+
+
 @tool
 async def get_insert_options(
     site_id: str,
@@ -62,14 +66,16 @@ async def get_insert_options(
 ) -> dict:
     """
     Retrieve the list of page types (templates) that can be created as child pages
-    under the specified parent. Always call this before presenting a page creation plan —
-    the marketer must choose from the available types for the selected parent location.
-    Returns an empty insert_options list if no templates are available (creation not
-    permitted at that location).
+    under the specified parent. Use this to show the marketer what options are
+    available at a given location without creating anything.
+
+    Note: create_page resolves template_name automatically — you only need this
+    tool if you want to present the available types before asking the marketer
+    to choose.
 
     IMPORTANT: parent_page_id must be a UUID obtained from search_pages. NEVER pass
     a string like "root", "home", or any invented value — the API will reject it.
-    Call search_pages with an empty query first to find the home page ID.
+    Call search_pages with query="Home" first to find the home page ID.
 
     Args:
         site_id: Active site identifier from session context
@@ -85,40 +91,91 @@ async def get_insert_options(
     return await get_insert_options_api(parent_page_id, site_id, language, auth_token)
 
 
+get_insert_options._tier = TOOL_TIER_DIRECT
+
+
 @tool
 async def create_page(
     site_id: str,
     environment: str,
     parent_page_id: str,
-    template_id: str,
+    template_name: str,
     display_name: str,
     language: str,
 ) -> dict:
     """
-    Create a new page as a child of the specified parent page using the selected template.
-    ONLY call this tool after the marketer has explicitly approved the creation plan
-    (parent path, page type, and display name). Returns the new page's ID and display name.
+    Create a new page as a child of the specified parent page.
 
-    IMPORTANT: parent_page_id must be a UUID from search_pages — NEVER use "root", "home",
-    or any string that was not returned by a prior search_pages call.
-    template_id must be a UUID from get_insert_options — NEVER invent one.
+    This is a composite tool: it automatically fetches the available page types
+    for the parent location and resolves template_name to the correct template ID.
+    You do NOT need to call get_insert_options first — pass a human-readable
+    template name and the tool will match it.
+
+    If template_name does not match any available type, the tool returns
+    {success: False, available_templates: [...]} listing what IS available at that
+    location so you can ask the marketer to choose.
+
+    ONLY call this tool after the marketer has confirmed the parent location, page
+    type, and display name.
+
+    IMPORTANT: parent_page_id must be a UUID from search_pages — NEVER use "root",
+    "home", or any string not returned by a prior search_pages call.
 
     Args:
         site_id: Active site identifier from session context
         environment: Active environment identifier from session context
-        parent_page_id: UUID of the parent page, obtained from search_pages
-        template_id: Template UUID from get_insert_options result
-        display_name: Simple page label chosen by the marketer — letters, numbers,
-                      hyphens, and spaces only. No slashes, angle brackets, or
-                      special characters (they will be rejected by the API).
-        language: Language code for the new page
+        parent_page_id: UUID of the parent page, from search_pages
+        template_name: Human-readable page type name, e.g. "Landing Page" or
+                       "Article Page". Case-insensitive. Pass any value if unsure
+                       and the tool will return the list of available types.
+        display_name: Simple page label — letters, numbers, hyphens, and spaces only.
+                      No slashes, angle brackets, or special characters.
+        language: Language code for the new page, e.g. "en"
     """
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
         return {"success": False, "page_id": None, "display_name": None, "version": None, "error": str(exc)}
 
-    return await create_page_api(site_id, parent_page_id, template_id, display_name, language, auth_token)
+    options_result = await get_insert_options_api(parent_page_id, site_id, language, auth_token)
+    if not options_result.get("success"):
+        return {
+            "success": False,
+            "error": f"Could not fetch page types for parent {parent_page_id!r}: {options_result.get('error')}",
+        }
+
+    templates = options_result.get("insert_options", [])
+    if not templates:
+        return {
+            "success": False,
+            "error": "No page types are available at this parent location.",
+            "available_templates": [],
+        }
+
+    name_lower = template_name.lower()
+    matched = next(
+        (t for t in templates if t.get("template_name", "").lower() == name_lower),
+        None,
+    )
+    if matched is None:
+        matched = next(
+            (t for t in templates if name_lower in t.get("template_name", "").lower()),
+            None,
+        )
+
+    if matched is None:
+        return {
+            "success": False,
+            "error": f"Page type {template_name!r} not found for this parent location.",
+            "available_templates": [t.get("template_name", "") for t in templates],
+        }
+
+    return await create_page_api(
+        site_id, parent_page_id, matched["template_id"], display_name, language, auth_token
+    )
+
+
+create_page._tier = TOOL_TIER_COMPOSITE
 
 
 @tool
@@ -142,7 +199,10 @@ async def get_page_state(
     except RuntimeError as exc:
         return {"success": False, "error": str(exc)}
 
-    return await get_page_state_api(page_id, auth_token)
+    return await get_page_state_api(page_id, auth_token, site_id=site_id, language="")
+
+
+get_page_state._tier = TOOL_TIER_DIRECT
 
 
 @tool
@@ -170,28 +230,39 @@ async def rename_page(
     return await rename_page_api(page_id, new_display_name, auth_token)
 
 
+rename_page._tier = TOOL_TIER_DIRECT
+
+
 @tool
 async def duplicate_page(
     site_id: str,
     environment: str,
     page_id: str,
+    new_name: str,
+    language: str,
 ) -> dict:
     """
-    Duplicate a page, creating a copy as a sibling with a system-generated name.
-    ONLY call this tool after the marketer has confirmed the duplication.
+    Duplicate a page, creating a copy with the specified name.
+    ONLY call this tool after the marketer has confirmed the page to copy and
+    provided a name for the new copy.
     Returns the new (duplicate) page's ID and display name.
 
     Args:
-        site_id: Active site identifier from session context
+        site_id:     Active site identifier from session context
         environment: Active environment identifier from session context
-        page_id: Pages API identifier of the page to duplicate
+        page_id:     Pages API identifier of the page to duplicate
+        new_name:    Display name for the duplicate page (chosen by the marketer)
+        language:    Language code for the duplicated page (e.g. "en")
     """
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
         return {"success": False, "page_id": None, "display_name": None, "version": None, "error": str(exc)}
 
-    return await duplicate_page_api(page_id, auth_token)
+    return await duplicate_page_api(page_id, site_id, new_name, language, auth_token)
+
+
+duplicate_page._tier = TOOL_TIER_DIRECT
 
 
 @tool
@@ -220,7 +291,10 @@ async def update_page_fields(
     except RuntimeError as exc:
         return {"success": False, "page_id": page_id, "display_name": None, "version": None, "error": str(exc)}
 
-    return await update_page_fields_api(page_id, fields, language, auth_token)
+    return await update_page_fields_api(page_id, site_id, fields, language, auth_token)
+
+
+update_page_fields._tier = TOOL_TIER_DIRECT
 
 
 @tool
@@ -249,6 +323,9 @@ async def create_page_version(
     return await create_page_version_api(page_id, language, auth_token)
 
 
+create_page_version._tier = TOOL_TIER_DIRECT
+
+
 @tool
 async def delete_page(
     site_id: str,
@@ -271,3 +348,7 @@ async def delete_page(
         return {"success": False, "page_id": None, "display_name": None, "version": None, "error": str(exc)}
 
     return await delete_page_api(page_id, auth_token)
+
+
+# delete_page_api is exposed=False (destructive); this is the only sanctioned call path.
+delete_page._tier = TOOL_TIER_COMPOSITE

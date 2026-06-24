@@ -25,6 +25,9 @@ async def list_org_brand_kits() -> dict:
 
     If the list is empty, offer the marketer the option to create a new brand kit
     and import their brand documents.
+    If the marketer is choosing a brand kit, you MUST immediately call `present_options`
+    after this tool returns — do NOT write a prose list.
+    Format each kit as: {"id": kit_id, "label": kit_name, "metadata": status}
     """
     try:
         token = await get_sitecore_automation_token()
