@@ -34,7 +34,10 @@ export function ChatPanel() {
 
   function handleSelectOption(item: OptionItem) {
     if (!context) return;
-    send(item.label, context);
+    const msg = item.id && item.id !== item.label
+      ? `${item.label} (id: ${item.id})`
+      : item.label;
+    send(msg, context);
   }
 
   return (

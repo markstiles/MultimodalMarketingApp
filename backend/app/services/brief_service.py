@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import httpx
 
@@ -9,6 +10,192 @@ from app.services.sitecore_auth import get_sitecore_automation_token
 logger = logging.getLogger(__name__)
 
 _AGENT_API_BASE = "https://edge-platform.sitecorecloud.io/stream/ai-agent-api"
+
+# ---------------------------------------------------------------------------
+# Brief field schema — derived from the standard campaign brief type.
+# Each entry describes a field the API expects when saving/updating a brief.
+# ---------------------------------------------------------------------------
+
+STANDARD_BRIEF_FIELDS: list[dict] = [
+    {
+        "name": "Objectives",
+        "type": "RichText",
+        "label": "Campaign Objectives",
+        "description": "Primary goals and success metrics for the campaign (e.g. awareness, leads, attendance).",
+        "required": True,
+    },
+    {
+        "name": "TargetAudience",
+        "type": "RichText",
+        "label": "Target Audience",
+        "description": "Who the campaign is for — roles, industries, demographics, or segments.",
+        "required": True,
+    },
+    {
+        "name": "Message",
+        "type": "RichText",
+        "label": "Key Message",
+        "description": "The core message or value proposition the campaign should convey.",
+        "required": True,
+    },
+    {
+        "name": "CreativeRequirements",
+        "type": "RichText",
+        "label": "Creative Requirements",
+        "description": "Brand guidelines, mandatory inclusions, prohibited elements, and tone.",
+        "required": False,
+    },
+    {
+        "name": "MarketResearch",
+        "type": "RichText",
+        "label": "Market Research",
+        "description": "Competitor landscape, audience behavior, and market context.",
+        "required": False,
+    },
+    {
+        "name": "AdditionalNotes",
+        "type": "RichText",
+        "label": "Additional Notes",
+        "description": "Any other context, constraints, or guidance for the campaign team.",
+        "required": False,
+    },
+    {
+        "name": "Timeline",
+        "type": "Timeline",
+        "label": "Campaign Timeline",
+        "description": "Start date, end date, and key milestones. Dates in YYYY-MM-DD format.",
+        "required": False,
+        "shape": {
+            "startDate": "YYYY-MM-DD",
+            "endDate": "YYYY-MM-DD",
+            "events": [{"title": "string", "dueDate": "YYYY-MM-DD"}],
+        },
+    },
+    {
+        "name": "DueDate",
+        "type": "DateTime",
+        "label": "Due Date",
+        "description": "Campaign completion deadline as an ISO 8601 datetime string.",
+        "required": False,
+        "shape": "ISO 8601 datetime — e.g. '2026-07-19T23:59:59+00:00'",
+    },
+    {
+        "name": "Budget",
+        "type": "Budget",
+        "label": "Budget",
+        "description": "Total campaign budget with currency.",
+        "required": False,
+        "shape": {"type": "Budget", "currency": "USD", "amount": 0.0},
+    },
+]
+
+# Map field name → field definition for O(1) lookup
+_FIELD_BY_NAME: dict[str, dict] = {f["name"]: f for f in STANDARD_BRIEF_FIELDS}
+
+
+def text_to_prosemirror(text: str) -> dict:
+    """Convert a plain text string to a minimal ProseMirror document.
+
+    Splits on blank lines to produce separate paragraphs. Preserves the
+    string as-is if it is already a ProseMirror doc dict.
+    """
+    if isinstance(text, dict) and text.get("type") == "doc":
+        return text
+
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", str(text).strip()) if p.strip()]
+    if not paragraphs:
+        paragraphs = [""]
+
+    return {
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": para}],
+            }
+            for para in paragraphs
+        ],
+    }
+
+
+def _normalize_field_value(field_name: str, value: object) -> dict:
+    """Wrap a raw value in the {type, value} envelope the API expects.
+
+    If the caller already supplies a properly enveloped dict, return it
+    unchanged. Otherwise infer the envelope from the schema.
+    """
+    if isinstance(value, dict) and "type" in value and "value" in value:
+        return value  # already enveloped
+
+    schema = _FIELD_BY_NAME.get(field_name)
+    field_type = schema["type"] if schema else "RichText"
+
+    if field_type == "RichText":
+        return {"type": "RichText", "value": text_to_prosemirror(value)}
+    if field_type == "DateTime":
+        return {"type": "DateTime", "value": str(value)}
+    if field_type == "Budget":
+        if isinstance(value, dict):
+            payload = {**value, "type": "Budget"}
+        else:
+            payload = {"type": "Budget", "currency": "USD", "amount": float(value)}
+        return {"type": "Budget", "value": payload}
+    if field_type == "Timeline":
+        return {"type": "Timeline", "value": value if isinstance(value, dict) else {}}
+    return {"type": field_type, "value": value}
+
+
+def build_brief_fields(
+    objectives: str,
+    target_audience: str,
+    message: str,
+    creative_requirements: str = "",
+    market_research: str = "",
+    additional_notes: str = "",
+    due_date: str | None = None,
+    budget_amount: float | None = None,
+    budget_currency: str = "USD",
+    timeline_start: str | None = None,
+    timeline_end: str | None = None,
+    timeline_events: list[dict] | None = None,
+) -> dict:
+    """Build a properly typed brief fields dict from plain-text inputs.
+
+    All RichText inputs are wrapped in ProseMirror documents automatically.
+    Optional structured fields (Budget, Timeline, DueDate) are included only
+    when values are supplied.
+
+    Returns a dict ready to pass as the `fields` argument to create_brief /
+    update_brief.
+    """
+    fields: dict = {
+        "Objectives": _normalize_field_value("Objectives", objectives),
+        "TargetAudience": _normalize_field_value("TargetAudience", target_audience),
+        "Message": _normalize_field_value("Message", message),
+    }
+    if creative_requirements:
+        fields["CreativeRequirements"] = _normalize_field_value("CreativeRequirements", creative_requirements)
+    if market_research:
+        fields["MarketResearch"] = _normalize_field_value("MarketResearch", market_research)
+    if additional_notes:
+        fields["AdditionalNotes"] = _normalize_field_value("AdditionalNotes", additional_notes)
+    if due_date:
+        dt = due_date if "T" in due_date else f"{due_date}T23:59:59+00:00"
+        fields["DueDate"] = _normalize_field_value("DueDate", dt)
+    if budget_amount is not None:
+        fields["Budget"] = _normalize_field_value(
+            "Budget", {"type": "Budget", "currency": budget_currency, "amount": budget_amount}
+        )
+    if timeline_start or timeline_end or timeline_events:
+        timeline_val: dict = {}
+        if timeline_start:
+            timeline_val["startDate"] = timeline_start
+        if timeline_end:
+            timeline_val["endDate"] = timeline_end
+        if timeline_events:
+            timeline_val["events"] = timeline_events
+        fields["Timeline"] = _normalize_field_value("Timeline", timeline_val)
+    return fields
 
 
 def _headers(token: str) -> dict:
@@ -64,7 +251,7 @@ async def create_brief(
     url = f"{_AGENT_API_BASE}/api/v1/brief"
     body: dict = {"name": name, "locale": locale, "briefTypeId": brief_type_id}
     if fields:
-        body["fields"] = fields
+        body["fields"] = {k: _normalize_field_value(k, v) for k, v in fields.items()}
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(url, json=body, headers=_headers(token))
     resp.raise_for_status()

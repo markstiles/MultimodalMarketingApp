@@ -147,13 +147,14 @@ async def stream_chat(
         # Stream from LangGraph — 30 s timeout per event to detect hung tool calls
         full_response = ""
         write_occurred = False
+        _auto_options_emitted: set[str] = set()  # first auto-options emission per tool wins per turn
         try:
             gen = get_chat_graph().astream_events(
                 {"messages": lc_messages}, version="v2"
             )
             while True:
                 try:
-                    event = await asyncio.wait_for(gen.__anext__(), timeout=30.0)
+                    event = await asyncio.wait_for(gen.__anext__(), timeout=360.0)
                 except asyncio.TimeoutError:
                     yield _event({"type": "error", "code": "timeout"})
                     return
@@ -174,7 +175,36 @@ async def stream_chat(
                     yield _event({"type": "tool_end", "tool": tool_name})
                     if tool_name in _WRITE_TOOLS:
                         write_occurred = True
-                    if tool_name in ("search_site_images", "present_options"):
+                    _AUTO_OPTIONS_TOOLS = {
+                        "search_site_images",
+                        "present_options",
+                        "get_site_templates",
+                        "get_environment_languages",
+                        "list_site_collections",
+                    }
+                    if tool_name == "create_marketing_site":
+                        raw = event.get("data", {}).get("output")
+                        output = raw
+                        if hasattr(raw, "content"):
+                            try:
+                                output = json.loads(raw.content)
+                            except Exception:
+                                output = {}
+                        elif isinstance(raw, str):
+                            try:
+                                output = json.loads(raw)
+                            except Exception:
+                                output = {}
+                        if isinstance(output, dict) and output.get("pending") and output.get("handle"):
+                            yield _event({
+                                "type": "job_started",
+                                "handle": output["handle"],
+                                "name": output.get("name", ""),
+                            })
+                    if tool_name in _AUTO_OPTIONS_TOOLS and (
+                        tool_name in ("search_site_images", "present_options")
+                        or not _auto_options_emitted
+                    ):
                         raw = event.get("data", {}).get("output")
                         if tool_name == "search_site_images":
                             logger.info("search_site_images on_tool_end output type=%s value=%r", type(raw).__name__, str(raw)[:200])
@@ -210,6 +240,54 @@ async def stream_chat(
                                     "option_type": output.get("option_type", "generic"),
                                     "count": output.get("count", len(output["items"])),
                                 })
+                            elif tool_name == "get_site_templates" and output.get("success") and output.get("templates"):
+                                items = [
+                                    {"id": t["template_id"], "label": t["template_name"], "description": t.get("description", "")}
+                                    for t in output["templates"]
+                                    if t.get("template_id") and t.get("template_name")
+                                ]
+                                if items:
+                                    logger.info("Auto-emitting options for get_site_templates: %d items", len(items))
+                                    _auto_options_emitted.add(tool_name)
+                                    yield _event({
+                                        "type": "options",
+                                        "items": items,
+                                        "prompt": "Which template would you like to use?",
+                                        "option_type": "generic",
+                                        "count": len(items),
+                                    })
+                            elif tool_name == "get_environment_languages" and output.get("success") and output.get("languages"):
+                                items = [
+                                    {"id": lang["isoCode"], "label": lang.get("label") or lang["isoCode"]}
+                                    for lang in output["languages"]
+                                    if lang.get("isoCode")
+                                ]
+                                if items:
+                                    logger.info("Auto-emitting options for get_environment_languages: %d items", len(items))
+                                    _auto_options_emitted.add(tool_name)
+                                    yield _event({
+                                        "type": "options",
+                                        "items": items,
+                                        "prompt": "Which primary language would you like for this site?",
+                                        "option_type": "generic",
+                                        "count": len(items),
+                                    })
+                            elif tool_name == "list_site_collections" and output.get("success") and output.get("collections"):
+                                items = [
+                                    {"id": c["id"], "label": c["name"]}
+                                    for c in output["collections"]
+                                    if c.get("id") and c.get("name")
+                                ]
+                                if items:
+                                    logger.info("Auto-emitting options for list_site_collections: %d items", len(items))
+                                    _auto_options_emitted.add(tool_name)
+                                    yield _event({
+                                        "type": "options",
+                                        "items": items,
+                                        "prompt": "Which collection should the site belong to?",
+                                        "option_type": "generic",
+                                        "count": len(items),
+                                    })
         except Exception as exc:
             code = _map_error(exc)
             yield _event({"type": "error", "code": code})

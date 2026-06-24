@@ -66,12 +66,15 @@ async def get_insert_options(
 ) -> dict:
     """
     Retrieve the list of page types (templates) that can be created as child pages
-    under the specified parent. Use this to show the marketer what options are
-    available at a given location without creating anything.
+    under the specified parent.
 
-    Note: create_page resolves template_name automatically — you only need this
-    tool if you want to present the available types before asking the marketer
-    to choose.
+    REQUIRED before generating any sitemap or creating multiple pages: call this
+    once on the home/root page and use only the returned template names when
+    planning which page types to create. Never invent template names — if a name
+    does not appear in this result, it cannot be used with create_page.
+
+    Results are cached for 120 seconds, so calling this once per parent is
+    sufficient — create_page will reuse the cached result automatically.
 
     IMPORTANT: parent_page_id must be a UUID obtained from search_pages. NEVER pass
     a string like "root", "home", or any invented value — the API will reject it.
@@ -106,14 +109,15 @@ async def create_page(
     """
     Create a new page as a child of the specified parent page.
 
-    This is a composite tool: it automatically fetches the available page types
-    for the parent location and resolves template_name to the correct template ID.
-    You do NOT need to call get_insert_options first — pass a human-readable
-    template name and the tool will match it.
+    template_name MUST exactly match a name returned by get_insert_options for the
+    parent location. Never invent a template name — always call get_insert_options
+    first (especially before bulk creation) and use only the names it returns.
+
+    The insert-options result is cached for 120 seconds, so repeated create_page
+    calls for the same parent are efficient — no redundant API calls are made.
 
     If template_name does not match any available type, the tool returns
-    {success: False, available_templates: [...]} listing what IS available at that
-    location so you can ask the marketer to choose.
+    {success: False, available_templates: [...]} listing what IS available.
 
     ONLY call this tool after the marketer has confirmed the parent location, page
     type, and display name.
@@ -125,9 +129,8 @@ async def create_page(
         site_id: Active site identifier from session context
         environment: Active environment identifier from session context
         parent_page_id: UUID of the parent page, from search_pages
-        template_name: Human-readable page type name, e.g. "Landing Page" or
-                       "Article Page". Case-insensitive. Pass any value if unsure
-                       and the tool will return the list of available types.
+        template_name: Exact page type name from get_insert_options, e.g.
+                       "Landing Page". Case-insensitive match is attempted.
         display_name: Simple page label — letters, numbers, hyphens, and spaces only.
                       No slashes, angle brackets, or special characters.
         language: Language code for the new page, e.g. "en"

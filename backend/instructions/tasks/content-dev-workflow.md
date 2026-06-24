@@ -188,7 +188,29 @@ If no kit and no documents: Ask targeted questions to capture brand voice direct
 
 ## Brief Phase (and Flexible Entry Point)
 
-The Campaign Brief is stored in the **Sitecore Agents API** (not the media library). Use the dedicated brief tools — `get_brief_types`, `generate_campaign_brief`, `save_campaign_brief`, `get_campaign_brief`, `update_campaign_brief`, `find_campaign_brief` — for all Brief phase work. Do **not** use `save_phase_artifact` or `get_phase_artifact_content` for the Brief phase.
+The Campaign Brief is stored in the **Sitecore Agents API** (not the media library). Use the dedicated brief tools — `get_brief_types`, `generate_campaign_brief`, `save_campaign_brief`, `compose_campaign_brief`, `get_campaign_brief`, `update_campaign_brief`, `find_campaign_brief`, `describe_brief_schema` — for all Brief phase work. Do **not** use `save_phase_artifact` or `get_phase_artifact_content` for the Brief phase.
+
+### Campaign Brief Field Schema
+
+A standard campaign brief has these nine fields. Call `describe_brief_schema` to retrieve this at runtime when needed.
+
+| Field | Required | Type | What to collect |
+|---|---|---|---|
+| `Objectives` | ✓ | RichText | Campaign goals and success metrics |
+| `TargetAudience` | ✓ | RichText | Roles, industries, demographics, or segments |
+| `Message` | ✓ | RichText | Core message or value proposition |
+| `CreativeRequirements` | | RichText | Brand guidelines, mandatory inclusions, tone |
+| `MarketResearch` | | RichText | Competitor landscape, audience behavior |
+| `AdditionalNotes` | | RichText | Other context or constraints |
+| `Timeline` | | Timeline | Start date, end date, key milestones |
+| `DueDate` | | DateTime | Campaign completion deadline |
+| `Budget` | | Budget | Total amount and currency |
+
+**Creating a brief from conversation or an uploaded document**: Use `compose_campaign_brief`. It accepts plain text for every field and handles formatting automatically — you do not need to construct ProseMirror JSON or typed envelopes.
+
+**Creating a brief from AI generation**: Use `generate_campaign_brief` → review → `save_campaign_brief`. The generated fields from the API are already in the correct format.
+
+**Informing the marketer**: If the marketer asks what information they need to provide for a brief, call `describe_brief_schema` and present the required and optional fields in plain language.
 
 ### Brief entry point — when marketer already has a brief
 
@@ -223,7 +245,7 @@ When the marketer says they have an existing brief:
 4. Present the generated brief fields (from `text_summary`) to the marketer for review and editing
 5. After approval: call `save_campaign_brief` with the brief name, type ID, and approved field values
 
-**If no brand kit is available** (Brand Voice phase was skipped): compose brief fields manually from the conversation context and call `save_campaign_brief` directly with those fields — skip the `generate_campaign_brief` step.
+**If no brand kit is available** (Brand Voice phase was skipped): collect the required and optional brief fields from the marketer through conversation and call `compose_campaign_brief` directly — skip the `generate_campaign_brief` step. See the Brief Field Schema table above for the full list of fields to collect.
 
 ### Returning to the Brief phase
 

@@ -37,13 +37,47 @@ export function useChat(initialConversationId?: string | null) {
   const pendingImageResultsRef = useRef<ImageResult[] | null>(null);
   const pendingImageQueryRef = useRef<string>("");
   const pendingOptionsRef = useRef<OptionsPayload | null>(null);
+  const jobPollsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   // On mount, pick up conversationId from URL (set by auth callback after login redirect)
   useEffect(() => {
     const urlId = pickupUrlConversationId();
     if (urlId) setConversationId(urlId);
   }, []);
+
+  // Clean up all job poll intervals on unmount
+  useEffect(() => {
+    const polls = jobPollsRef.current;
+    return () => { polls.forEach((id) => clearInterval(id)); };
+  }, []);
+
   const abortRef = useRef<AbortController | null>(null);
+
+  const startJobPoll = useCallback((handle: string, siteName: string) => {
+    if (jobPollsRef.current.has(handle)) return;
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/jobs?handle=${encodeURIComponent(handle)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const status: string = data.status ?? "";
+        if (status === "Completed" || status === "Failed") {
+          clearInterval(intervalId);
+          jobPollsRef.current.delete(handle);
+          const content = status === "Completed"
+            ? `Site '${siteName}' has been created successfully and is ready to use.`
+            : `Site creation for '${siteName}' failed. Please try again or check the Sitecore dashboard.`;
+          setMessages((prev) => [
+            ...prev,
+            { id: crypto.randomUUID(), role: "assistant", content },
+          ]);
+        }
+      } catch {
+        // network hiccup — keep polling
+      }
+    }, 5000);
+    jobPollsRef.current.set(handle, intervalId);
+  }, []);
 
   const send = useCallback(
     async (text: string, context: RuntimeContext) => {
@@ -126,6 +160,8 @@ export function useChat(initialConversationId?: string | null) {
                 option_type: event.option_type,
                 count: event.count,
               };
+            } else if (event.type === "job_started") {
+              startJobPoll(event.handle, event.name);
             } else if (event.type === "canvas_reload") {
               setCanvasReload((n) => n + 1);
             } else if (event.type === "done") {
@@ -165,7 +201,7 @@ export function useChat(initialConversationId?: string | null) {
         setToolActivity(null);
       }
     },
-    [loading, conversationId]
+    [loading, conversationId, startJobPoll]
   );
 
   const retry = useCallback(() => {

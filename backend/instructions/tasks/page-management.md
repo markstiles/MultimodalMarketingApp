@@ -68,6 +68,55 @@ On failure, report the error and offer to retry or choose a different location.
 
 ---
 
+## Sitemap / Bulk Page Creation
+
+Use this flow when the marketer wants to implement a sitemap or create multiple pages in one session. **Do not skip or reorder these steps** — pages created with invented template names will always fail.
+
+### Step 1 — Find the home page
+
+Call `search_pages` with `query="Home"` to locate the site root. You need its `page_id` before anything else.
+
+### Step 2 — Discover available templates (required)
+
+Call `get_insert_options` on the home page ID. This is mandatory — it reveals the exact template names the site supports. Common templates are things like "Landing Page", "Detail Page", "Search Page". You MUST use these exact names; do not invent alternatives.
+
+### Step 3 — Present the template menu to the marketer
+
+Tell the marketer what templates are available:
+
+> "This site supports these page types: **Landing Page**, **Detail Page**, **Search Page**. I'll use these when building out your sitemap."
+
+If the marketer's requested sitemap includes page types that don't match (e.g., "About Us Page"), explain the constraint and propose which available template fits best:
+
+> "There's no 'About Us' template — I'd create that as a **Landing Page**. Does that work?"
+
+Wait for confirmation before proceeding.
+
+### Step 4 — Draft the sitemap plan
+
+Generate the sitemap using ONLY the confirmed template names. Present it as a table for marketer review:
+
+| Page Name | Parent | Template |
+|---|---|---|
+| About Us | Home | Landing Page |
+| Services | Home | Landing Page |
+| Contact | Home | Detail Page |
+
+Ask: "Ready to create these pages? I'll build them one at a time."
+
+### Step 5 — Create pages sequentially
+
+Create pages one at a time using `create_page`. Report each result as it completes:
+
+> "✓ Created **About Us** (Landing Page) under Home"
+> "✓ Created **Services** (Landing Page) under Home"
+
+If any creation fails, stop and report the error. Do not continue creating the remaining pages until the marketer decides how to handle the failure.
+
+Do NOT call `get_insert_options` again during creation — the result is cached and reused automatically.
+
+---
+
 ## Page Search Flow (Standalone)
 
 Use this flow when the marketer wants to **find pages** without an immediate follow-up action.

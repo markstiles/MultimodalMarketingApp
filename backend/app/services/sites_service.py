@@ -358,7 +358,22 @@ async def validate_site_name(
     return {"success": True, "valid": True, "site_name": site_name}
 
 
-async def _poll_job(handle: str, auth_token: str, *, max_wait: int = 60, interval: float = 2.0) -> dict:
+async def check_job_status(handle: str, auth_token: str) -> dict:
+    """Return the current status of a job without blocking."""
+    jobs_url = f"{_get_api_base_url()}/jobs/{handle}/status"
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(jobs_url, headers=_auth_headers(auth_token))
+        resp.raise_for_status()
+        data = resp.json()
+        return {"success": True, "status": data.get("status", "Unknown"), "raw": data}
+    except httpx.HTTPStatusError as exc:
+        return {"success": False, "error": f"HTTP {exc.response.status_code}", "status": "Error"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "status": "Error"}
+
+
+async def _poll_job(handle: str, auth_token: str, *, max_wait: int = 300, interval: float = 5.0) -> dict:
     """Poll GET /api/v1/jobs/{handle}/status until Completed or Failed, or timeout."""
     jobs_url = f"{_get_api_base_url()}/jobs/{handle}/status"
     elapsed = 0.0
@@ -469,32 +484,15 @@ async def create_site(
             _site_cache[result["id"]] = result
         return result
 
-    # POST /api/v1/sites returns a JobResponse — poll until the site creation job completes
-    try:
-        job = await _poll_job(handle, auth_token)
-    except RuntimeError as exc:
-        return {"success": False, "error": str(exc)}
-
-    # Job completed — look up the newly created site by name to retrieve its ID
-    site = await _find_site_by_name(name, auth_token)
-    if not site.get("id"):
-        logger.warning("create_site: job completed but site %r not found in listing", name)
-        return {
-            "success": True,
-            "id": "",
-            "name": name,
-            "collection": job.get("siteCollection") or collection,
-            "warning": "Site was created but its ID could not be resolved — refresh the site list",
-        }
-
-    result = {
+    # Return immediately with the job handle — the frontend polls for completion
+    logger.info("create_site: job started handle=%r for site %r", handle, name)
+    return {
         "success": True,
-        "id": site["id"],
-        "name": site["name"],
-        "collection": site["collection"] or job.get("siteCollection") or collection,
+        "pending": True,
+        "handle": handle,
+        "name": name,
+        "collection": collection,
     }
-    _site_cache[result["id"]] = result
-    return result
 
 
 @api_endpoint(exposed=False, category="sites")
@@ -560,6 +558,37 @@ async def add_environment_language(language: str, auth_token: str) -> dict:
         return {"success": False, "error": str(exc)}
 
     return {"success": True, "language": language, "data": data}
+
+
+@api_endpoint(exposed=True, category="sites")
+async def set_language_fallback(language: str, fallback_iso: str | None, auth_token: str) -> dict:
+    """Set or clear the fallback language for a given language via PATCH /api/v1/languages/{isoCode}.
+
+    `language` is the BCP 47 code of the language to update (e.g. "fr-FR").
+    `fallback_iso` is the ISO code of the fallback language (e.g. "en"), or None to clear.
+    Returns {success, language, fallback_language} on success or {success, error} on failure.
+    """
+    url = f"{_get_languages_base_url()}/{language}"
+    body: dict = {"fallbackLanguageIso": fallback_iso}
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.patch(url, json=body, headers=_auth_headers(auth_token))
+        if resp.status_code == 404:
+            return {"success": False, "error": f"Language {language!r} not found in the environment"}
+        resp.raise_for_status()
+    except httpx.TimeoutException:
+        return {"success": False, "error": f"Timed out setting fallback for {language!r}"}
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "set_language_fallback HTTP %d (%s → %s): %s",
+            exc.response.status_code, language, fallback_iso, exc.response.text,
+        )
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.warning("Failed to set fallback for %s: %s", language, exc)
+        return {"success": False, "error": str(exc)}
+
+    return {"success": True, "language": language, "fallback_language": fallback_iso}
 
 
 @api_endpoint(exposed=True, category="sites")

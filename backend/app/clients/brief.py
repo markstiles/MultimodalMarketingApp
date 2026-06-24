@@ -3,7 +3,9 @@ import logging
 from langchain_core.tools import tool
 
 from app.services.brief_service import (
+    STANDARD_BRIEF_FIELDS,
     brief_fields_to_text,
+    build_brief_fields,
     create_brief,
     delete_brief,
     generate_brief,
@@ -85,11 +87,25 @@ async def save_campaign_brief(
     The brief is created with Draft status and can be viewed in the Sitecore
     Brief management tool.
 
+    Use compose_campaign_brief instead when building a brief from conversation or
+    an uploaded document — it accepts plain text and handles field formatting for you.
+
+    Standard campaign brief fields (pass only the ones you have):
+      Objectives, TargetAudience, Message  (required — RichText)
+      CreativeRequirements, MarketResearch, AdditionalNotes  (optional — RichText)
+      Timeline  (optional — {startDate, endDate, events: [{title, dueDate}]})
+      DueDate   (optional — ISO 8601 datetime string)
+      Budget    (optional — {type: "Budget", currency: "USD", amount: 0.0})
+
+    RichText values must be ProseMirror doc objects:
+      {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "..."}]}]}
+    Plain strings are also accepted — they are wrapped automatically.
+
     Args:
         name: Display name for the brief (e.g. "Summer 2026 Campaign Brief")
         brief_type_id: Brief type ID from get_brief_types()
-        fields: Optional dict of approved field values from generate_campaign_brief.
-                Format: {fieldName: {"type": "RichText"|"SimpleText", "value": "..."}}
+        fields: Dict of field values — {fieldName: {"type": "...", "value": ...}}
+                Plain string values are auto-normalized for RichText fields.
         locale: Locale code in xx-XX format (default "en-us")
 
     Returns the created brief id, name, status, and locale.
@@ -191,6 +207,103 @@ async def delete_campaign_brief(brief_id: str) -> dict:
     except Exception as exc:
         logger.error("delete_brief failed: %s", exc)
         return {"success": False, "error": str(exc), "brief_id": brief_id}
+
+
+@tool
+async def describe_brief_schema() -> dict:
+    """
+    Return the standard campaign brief field schema.
+
+    Call this when:
+    - The marketer asks what information is needed to create a brief
+    - You are about to create a brief from conversation and need to know what to collect
+    - You are extracting brief content from an uploaded document and need field names
+
+    Returns a list of fields with name, type, description, and whether they are required.
+    For structured fields (Timeline, Budget) also returns the expected shape.
+    """
+    return {
+        "success": True,
+        "brief_type": "Standard Campaign Brief",
+        "fields": STANDARD_BRIEF_FIELDS,
+        "notes": (
+            "RichText fields accept plain text — it is wrapped in the required format automatically. "
+            "Timeline and Budget fields require structured values (see 'shape' on each field). "
+            "DueDate accepts a date string in YYYY-MM-DD format; time defaults to 23:59:59 UTC."
+        ),
+    }
+
+
+@tool
+async def compose_campaign_brief(
+    brief_name: str,
+    brief_type_id: str,
+    objectives: str,
+    target_audience: str,
+    message: str,
+    creative_requirements: str = "",
+    market_research: str = "",
+    additional_notes: str = "",
+    due_date: str | None = None,
+    budget_amount: float | None = None,
+    budget_currency: str = "USD",
+    timeline_start: str | None = None,
+    timeline_end: str | None = None,
+    locale: str = "en-us",
+) -> dict:
+    """
+    Build and save a campaign brief from plain-text field values.
+
+    Use this tool when creating a brief from conversation, research, or an
+    uploaded document. Pass plain text for each field — all formatting and
+    field-type wrapping is handled automatically.
+
+    The three required text fields are Objectives, TargetAudience, and Message.
+    All other fields are optional — include them when the information is available.
+
+    Args:
+        brief_name:            Display name (e.g. "Q3 Product Launch Brief")
+        brief_type_id:         Brief type ID from get_brief_types()
+        objectives:            What the campaign aims to achieve (plain text)
+        target_audience:       Who the campaign is for (plain text)
+        message:               Core message / value proposition (plain text)
+        creative_requirements: Brand guidelines, mandatory inclusions (plain text)
+        market_research:       Competitor and market context (plain text)
+        additional_notes:      Any other context or constraints (plain text)
+        due_date:              Campaign deadline — YYYY-MM-DD or ISO 8601 datetime
+        budget_amount:         Total budget as a number (e.g. 50000)
+        budget_currency:       Currency code (default "USD")
+        timeline_start:        Campaign start date — YYYY-MM-DD
+        timeline_end:          Campaign end date — YYYY-MM-DD
+        locale:                Locale code in xx-XX format (default "en-us")
+
+    Returns the created brief id, name, status, and locale.
+    """
+    try:
+        fields = build_brief_fields(
+            objectives=objectives,
+            target_audience=target_audience,
+            message=message,
+            creative_requirements=creative_requirements,
+            market_research=market_research,
+            additional_notes=additional_notes,
+            due_date=due_date,
+            budget_amount=budget_amount,
+            budget_currency=budget_currency,
+            timeline_start=timeline_start,
+            timeline_end=timeline_end,
+        )
+        brief = await create_brief(brief_name, brief_type_id, fields=fields, locale=locale)
+        return {
+            "success": True,
+            "brief_id": brief.get("id"),
+            "name": brief.get("name"),
+            "status": brief.get("status", "Draft"),
+            "locale": brief.get("locale"),
+        }
+    except Exception as exc:
+        logger.error("compose_campaign_brief failed: %s", exc)
+        return {"success": False, "error": str(exc), "brief_id": None}
 
 
 @tool

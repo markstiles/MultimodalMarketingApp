@@ -14,6 +14,7 @@ from app.services.sites_service import (
     get_site_templates as _svc_get_templates,
     list_collections as _svc_list_collections,
     list_sites as _svc_list_sites,
+    set_language_fallback as _svc_set_fallback,
     validate_site_name as _svc_validate_name,
 )
 from app.services.sitecore_auth import get_sitecore_automation_token
@@ -95,49 +96,37 @@ async def list_all_sites() -> dict:
 
 
 @tool
-async def get_environment_languages(environment_id: str) -> dict:
+async def get_environment_languages() -> dict:
     """
-    Retrieve all languages available for selection in the given environment.
+    Retrieve all languages available for selection in the current environment.
 
     Call this when creating a new site so the marketer can choose the primary
     language. Each entry has at minimum an isoCode (e.g. "en", "fr-FR") and a
     label. Pass the chosen isoCode as the language argument to create_marketing_site.
 
-    Args:
-        environment_id: Environment name from session context (e.g. "Production",
-                        "Default") — use the environment value from the Pages editor
-                        context, or ask the marketer if unknown
-
-    Returns a list of language objects. After this tool returns, you MUST immediately
-    call `present_options` to display the languages as clickable buttons — do NOT
-    write a prose list. Format each as:
-      {"id": isoCode, "label": language_label}
+    Returns a list of language objects. The system automatically displays them as
+    clickable buttons — do NOT call `present_options` and do NOT list them in prose.
+    Wait for the user to click a language before proceeding.
     """
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
         return {"success": False, "languages": [], "error": str(exc)}
 
-    return await _svc_get_env_languages(environment_id, auth_token)
+    return await _svc_get_env_languages("", auth_token)
 
 
 @tool
-async def get_site_templates(environment_id: str) -> dict:
+async def get_site_templates() -> dict:
     """
-    Retrieve available site templates for the given environment.
+    Retrieve available site templates for the current environment.
 
     Call this FIRST before creating a site — the marketer must pick a template
     and you need its id for both validate_site_name and create_marketing_site.
 
-    Args:
-        environment_id: Environment name from session context (e.g. "Production",
-                        "Default") — use the environment value from the Pages editor
-                        context, or ask the marketer if unknown
-
-    Returns a list of templates. After this tool returns, you MUST immediately call
-    `present_options` to display the templates as clickable buttons — do NOT write
-    a prose list. Format each template as:
-      {"id": template_id, "label": template_name, "description": "...description..."}
+    Returns a list of templates. The system automatically displays them as clickable
+    buttons — do NOT call `present_options` and do NOT list them in prose. Wait for
+    the user to click a template before proceeding.
     NEVER pass template_name as the template_id — the API will reject it.
     """
     try:
@@ -145,7 +134,7 @@ async def get_site_templates(environment_id: str) -> dict:
     except RuntimeError as exc:
         return {"success": False, "templates": [], "error": str(exc)}
 
-    return await _svc_get_templates(environment_id, auth_token)
+    return await _svc_get_templates("", auth_token)
 
 
 @tool
@@ -205,8 +194,12 @@ async def create_marketing_site(
         template_id: The template_id UUID from get_site_templates — NEVER the template_name string
         language:    isoCode from get_environment_languages (e.g. "en")
 
-    Returns the new site's id, name, and collection on success, or
-    success=False with a descriptive error (including 409 if the site exists).
+    Returns {success, pending: true, handle, name, collection} when creation has
+    started — the site is NOT ready yet. Tell the user it will be ready in 1–3
+    minutes and that they will be notified. Do NOT poll or call any other tools
+    to check on the job — the system handles completion automatically.
+    Returns success=False with a descriptive error on failure (including 409 if
+    the site already exists).
     """
     try:
         auth_token = await get_sitecore_automation_token()
@@ -251,9 +244,9 @@ async def list_site_collections() -> dict:
     help the marketer understand how existing sites are organised.
 
     Returns a list of collection objects with id, name, and description, plus a count.
-    If the user is choosing a collection, you MUST immediately call `present_options`
-    after this tool returns — do NOT write a prose list.
-    Format each as: {"id": collection_id, "label": collection_name}
+    The system automatically displays them as clickable buttons — do NOT call
+    `present_options` and do NOT list them in prose. Wait for the user to click a
+    collection before proceeding.
     """
     try:
         auth_token = await get_sitecore_automation_token()
@@ -329,6 +322,14 @@ async def add_language_to_site(language: str) -> dict:
 
     Returns an error if the language is already configured in the environment.
 
+    After successfully adding a language, you MUST ask the marketer:
+    "Would you like to set a fallback language for [language]? A fallback is used
+    when content is not available in this language — Sitecore will serve content
+    from the fallback instead of showing a blank page."
+    - If they want one: call `get_environment_languages` (existing languages will
+      appear as buttons). After the marketer clicks one, call `set_fallback_language`.
+    - If they say no or skip: proceed without setting a fallback.
+
     Args:
         language: BCP 47 language/locale code to add (e.g. "fr-FR", "de-DE")
 
@@ -341,3 +342,34 @@ async def add_language_to_site(language: str) -> dict:
         return {"success": False, "error": str(exc)}
 
     return await _svc_add_language(language, auth_token)
+
+
+@tool
+async def set_fallback_language(language: str, fallback_language: str) -> dict:
+    """
+    Set the fallback language for a language/locale in the environment.
+
+    When content is not available in `language`, Sitecore will serve content
+    from `fallback_language` instead. Call this after `add_language_to_site`
+    when the marketer wants to configure a fallback.
+
+    Use `get_environment_languages` to present the available languages as
+    clickable options before calling this tool — never invent an ISO code.
+
+    Args:
+        language:          The language to configure (e.g. "fr-CA")
+        fallback_language: The fallback ISO code — must be an existing environment
+                           language (e.g. "fr-FR", "en"). Never use the same
+                           value as `language`.
+
+    Returns {success, language, fallback_language} on success or
+    {success, error} on failure.
+    """
+    if language == fallback_language:
+        return {"success": False, "error": "A language cannot be its own fallback."}
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+
+    return await _svc_set_fallback(language, fallback_language, auth_token)

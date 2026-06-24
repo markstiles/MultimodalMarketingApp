@@ -1,11 +1,18 @@
 import logging
 import os
+import time
 
 import httpx
 
 from app.services._api_endpoint import api_endpoint
 
 logger = logging.getLogger(__name__)
+
+# Short-lived cache for insert-options results.
+# Key: (parent_page_id, site_id, language) — Value: (expires_at, result)
+# Avoids N identical API calls when create_page is invoked N times for the same parent.
+_INSERT_OPTIONS_CACHE: dict[tuple, tuple] = {}
+_INSERT_OPTIONS_TTL = 120.0  # seconds
 
 
 def _normalize_id(value: str) -> str:
@@ -116,6 +123,13 @@ async def get_insert_options_api(
     auth_token: str,
     insert_option_kind: str = "Page",
 ) -> dict:
+    cache_key = (_normalize_id(parent_page_id), site_id, language, insert_option_kind)
+    now = time.monotonic()
+    cached_expires, cached_result = _INSERT_OPTIONS_CACHE.get(cache_key, (0.0, None))
+    if cached_result is not None and now < cached_expires:
+        logger.debug("get_insert_options_api cache hit for parent=%s", parent_page_id)
+        return cached_result
+
     base_url = _get_base_url()
     params = {
         "site": site_id,
@@ -148,7 +162,9 @@ async def get_insert_options_api(
         }
         for t in (raw if isinstance(raw, list) else [])
     ]
-    return {"success": True, "insert_options": options, "error": None}
+    result = {"success": True, "insert_options": options, "error": None}
+    _INSERT_OPTIONS_CACHE[cache_key] = (now + _INSERT_OPTIONS_TTL, result)
+    return result
 
 
 @api_endpoint(exposed=True, category="pages")

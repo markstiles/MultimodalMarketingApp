@@ -62,6 +62,7 @@ export type SseEvent =
   | { type: "canvas_reload" }
   | { type: "image_results"; results: ImageResult[]; query: string; count: number }
   | { type: "options"; items: OptionItem[]; prompt: string; option_type: string; count: number }
+  | { type: "job_started"; handle: string; name: string }
   | { type: "done" }
   | { type: "error"; code: string };
 
