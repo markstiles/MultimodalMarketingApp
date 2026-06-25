@@ -142,13 +142,16 @@ async def stream_chat(
             "update_page_fields", "create_page_version",
             # Sites API write tools
             "set_fallback_language",
-            # MCP / component write tools
+            # Publishing write tools
+            "publish_content",
+            # Agent API page write tools
             "add_language_to_page", "add_component_on_page",
             "set_component_datasource", "create_component_ds",
             "create_content_item", "update_fields_on_item", "update_content",
-            "delete_content", "update_asset", "create_perso_version",
+            "delete_content", "upload_asset", "update_asset", "create_perso_version",
             "create_perso_version_multi", "update_perso_version",
             "create_component_ab_test", "update_ab_test", "set_component_variant",
+            "setup_flow_variant",
         })
 
         # Stream from LangGraph — 30 s timeout per event to detect hung tool calls

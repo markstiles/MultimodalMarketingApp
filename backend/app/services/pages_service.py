@@ -41,6 +41,13 @@ def _get_base_url() -> str:
     ).rstrip("/")
 
 
+def _get_agents_base_url() -> str:
+    return os.environ.get(
+        "SITECORE_AGENTS_API_BASE_URL",
+        "https://edge-platform.sitecorecloud.io/stream/ai-agent-api",
+    ).rstrip("/")
+
+
 def _auth_headers(auth_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
 
@@ -663,3 +670,248 @@ async def get_page_api(
         "url": d.get("url", ""),
         "error": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Agent API — higher-level page operations (SITECORE_AGENTS_API_BASE_URL)
+# ---------------------------------------------------------------------------
+
+@api_endpoint(exposed=True, category="pages")
+async def add_language_to_page_api(
+    page_id: str,
+    language: str,
+    auth_token: str,
+) -> dict:
+    """Add a language version to a page via Agent API POST /api/v1/pages/{pageId}/add-language."""
+    base = _get_agents_base_url()
+    normalized = _normalize_id(page_id)
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                f"{base}/api/v1/pages/{normalized}/add-language",
+                json={"language": language},
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("add_language_to_page_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.error("add_language_to_page_api error: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    return {"success": data.get("success", True), "page_id": page_id, "language": language, "error": None}
+
+
+@api_endpoint(exposed=True, category="pages")
+async def add_component_on_page_api(
+    page_id: str,
+    component_rendering_id: str,
+    placeholder_path: str,
+    component_item_name: str,
+    auth_token: str,
+    position_after_component_id: str = "",
+) -> dict:
+    """Add a component to a placeholder on a page via Agent API POST /api/v1/pages/{pageId}/components."""
+    base = _get_agents_base_url()
+    normalized = _normalize_id(page_id)
+    body: dict = {
+        "componentRenderingId": component_rendering_id,
+        "placeholderPath": placeholder_path,
+        "componentItemName": component_item_name,
+    }
+    if position_after_component_id:
+        body["position"] = {"afterComponentId": position_after_component_id}
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                f"{base}/api/v1/pages/{normalized}/components",
+                json=body,
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("add_component_on_page_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "component_id": None, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.error("add_component_on_page_api error: %s", exc)
+        return {"success": False, "component_id": None, "error": str(exc)}
+
+    return {
+        "success": True,
+        "component_id": data.get("componentId", ""),
+        "datasource_id": data.get("datasourceId", ""),
+        "error": None,
+    }
+
+
+@api_endpoint(exposed=True, category="pages")
+async def get_components_on_page_api(
+    page_id: str,
+    language: str,
+    auth_token: str,
+) -> dict:
+    """Retrieve all components on a page via Agent API GET /api/v1/pages/{pageId}/components."""
+    base = _get_agents_base_url()
+    normalized = _normalize_id(page_id)
+    params: dict = {}
+    if language:
+        params["language"] = language
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                f"{base}/api/v1/pages/{normalized}/components",
+                params=params,
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_components_on_page_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "components": [], "error": str(exc)}
+    except Exception as exc:
+        logger.error("get_components_on_page_api error: %s", exc)
+        return {"success": False, "components": [], "error": str(exc)}
+
+    raw = data.get("components", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+    return {"success": True, "components": raw, "error": None}
+
+
+@api_endpoint(exposed=True, category="pages")
+async def set_component_datasource_api(
+    page_id: str,
+    component_id: str,
+    datasource_id: str,
+    language: str,
+    auth_token: str,
+) -> dict:
+    """Set the datasource for a component on a page via Agent API POST /api/v1/pages/{pageId}/components/{componentId}/datasource."""
+    base = _get_agents_base_url()
+    normalized_page = _normalize_id(page_id)
+    normalized_comp = _normalize_id(component_id)
+    body: dict = {"datasourceId": datasource_id}
+    if language:
+        body["language"] = language
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                f"{base}/api/v1/pages/{normalized_page}/components/{normalized_comp}/datasource",
+                json=body,
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("set_component_datasource_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"}
+    except Exception as exc:
+        logger.error("set_component_datasource_api error: %s", exc)
+        return {"success": False, "error": str(exc)}
+
+    return {"success": data.get("success", True), "error": None}
+
+
+@api_endpoint(exposed=True, category="pages")
+async def get_allowed_components_api(
+    page_id: str,
+    placeholder_name: str,
+    auth_token: str,
+) -> dict:
+    """Retrieve components allowed in a placeholder via Agent API GET /api/v1/pages/{pageId}/placeholders/{name}/allowed-components."""
+    base = _get_agents_base_url()
+    normalized = _normalize_id(page_id)
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                f"{base}/api/v1/pages/{normalized}/placeholders/{placeholder_name}/allowed-components",
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_allowed_components_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "components": [], "error": str(exc)}
+    except Exception as exc:
+        logger.error("get_allowed_components_api error: %s", exc)
+        return {"success": False, "components": [], "error": str(exc)}
+
+    raw = data if isinstance(data, list) else data.get("components", data.get("data", []))
+    return {"success": True, "components": raw, "error": None}
+
+
+@api_endpoint(exposed=True, category="pages")
+async def get_page_preview_url_api(
+    page_id: str,
+    auth_token: str,
+    language: str = "",
+) -> dict:
+    """Get the preview URL for a page via Agent API GET /api/v1/pages/{pageId}/preview-url."""
+    base = _get_agents_base_url()
+    normalized = _normalize_id(page_id)
+    params: dict = {}
+    if language:
+        params["language"] = language
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                f"{base}/api/v1/pages/{normalized}/preview-url",
+                params=params,
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_page_preview_url_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "preview_url": None, "error": str(exc)}
+    except Exception as exc:
+        logger.error("get_page_preview_url_api error: %s", exc)
+        return {"success": False, "preview_url": None, "error": str(exc)}
+
+    return {
+        "success": True,
+        "page_id": data.get("pageId", page_id),
+        "preview_url": data.get("previewUrl", ""),
+        "error": None,
+    }
+
+
+@api_endpoint(exposed=True, category="pages")
+async def get_all_pages_by_site_api(
+    site_name: str,
+    language: str,
+    auth_token: str,
+) -> dict:
+    """Retrieve all pages for a site by name via Agent API GET /api/v1/sites/{siteName}/pages."""
+    base = _get_agents_base_url()
+    params: dict = {}
+    if language:
+        params["language"] = language
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.get(
+                f"{base}/api/v1/sites/{site_name}/pages",
+                params=params,
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_all_pages_by_site_api HTTP %s (site=%s): %s", exc.response.status_code, site_name, exc.response.text)
+        return {"success": False, "pages": [], "error": str(exc)}
+    except Exception as exc:
+        logger.error("get_all_pages_by_site_api error: %s", exc)
+        return {"success": False, "pages": [], "error": str(exc)}
+
+    raw = data if isinstance(data, list) else data.get("pages", data.get("data", []))
+    pages = [
+        {
+            "page_id": _normalize_id(p.get("id", p.get("pageId", ""))),
+            "name": p.get("name", p.get("pageName", "")),
+            "path": p.get("path", p.get("pagePath", "")),
+            "language": p.get("language", ""),
+        }
+        for p in (raw if isinstance(raw, list) else [])
+    ]
+    return {"success": True, "pages": pages, "total_count": len(pages), "error": None}

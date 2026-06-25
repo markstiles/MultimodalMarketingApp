@@ -4,6 +4,13 @@ from langchain_core.tools import tool
 
 from app.services._api_endpoint import TOOL_TIER_COMPOSITE, TOOL_TIER_DIRECT
 from app.services.pages_service import (
+    add_component_on_page_api,
+    add_language_to_page_api,
+    get_all_pages_by_site_api,
+    get_allowed_components_api,
+    get_components_on_page_api,
+    get_page_preview_url_api,
+    set_component_datasource_api,
     build_site_pages,
     create_page_api,
     create_page_version_api,
@@ -591,3 +598,188 @@ async def delete_page(
 
 # delete_page_api is exposed=False (destructive); this is the only sanctioned call path.
 delete_page._tier = TOOL_TIER_COMPOSITE
+
+
+# ---------------------------------------------------------------------------
+# Agent API tools — T032–T040
+# ---------------------------------------------------------------------------
+
+@tool
+async def add_language_to_page(
+    page_id: str,
+    language: str,
+) -> dict:
+    """Add a language version to an existing page.
+
+    ONLY call this tool after the marketer has explicitly confirmed the language to add.
+
+    Args:
+        page_id:  ID of the page to add a language version to
+        language: Language code to add, e.g. "fr-CA", "de", "es"
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+    return await add_language_to_page_api(page_id=page_id, language=language, auth_token=auth_token)
+
+
+@tool
+async def get_components_on_page(
+    page_id: str,
+    language: str = "en",
+) -> dict:
+    """Retrieve all components currently placed on a page.
+
+    Read-only — no confirmation required. Use this to understand what components
+    are on a page before adding new ones or setting datasources.
+
+    Args:
+        page_id:  ID of the page
+        language: Language version to retrieve components for (default "en")
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "components": [], "error": str(exc)}
+    return await get_components_on_page_api(page_id=page_id, language=language, auth_token=auth_token)
+
+
+@tool
+async def add_component_on_page(
+    page_id: str,
+    component_rendering_id: str,
+    placeholder_path: str,
+    component_item_name: str,
+    position_after_component_id: str = "",
+) -> dict:
+    """Add a component to a placeholder on a page.
+
+    ONLY call this tool after the marketer has explicitly approved adding the component,
+    including which component type and which placeholder location.
+
+    Args:
+        page_id:                     ID of the target page
+        component_rendering_id:      Rendering/template ID of the component to add
+                                     (get from get_allowed_components_by_placeholder)
+        placeholder_path:            Placeholder path on the page, e.g. "/jss-main/jss-header"
+        component_item_name:         Display name for the new component item
+        position_after_component_id: Optional ID of an existing component to position after
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "component_id": None, "error": str(exc)}
+    return await add_component_on_page_api(
+        page_id=page_id,
+        component_rendering_id=component_rendering_id,
+        placeholder_path=placeholder_path,
+        component_item_name=component_item_name,
+        auth_token=auth_token,
+        position_after_component_id=position_after_component_id,
+    )
+
+
+@tool
+async def set_component_datasource(
+    page_id: str,
+    component_id: str,
+    datasource_id: str,
+    language: str = "en",
+) -> dict:
+    """Bind a datasource item to a component on a page.
+
+    ONLY call this tool after the marketer has explicitly confirmed the datasource
+    to bind to the component.
+
+    Args:
+        page_id:        ID of the page
+        component_id:   ID of the component instance on the page
+        datasource_id:  ID of the datasource item to bind
+        language:       Language version (default "en")
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}
+    return await set_component_datasource_api(
+        page_id=page_id,
+        component_id=component_id,
+        datasource_id=datasource_id,
+        language=language,
+        auth_token=auth_token,
+    )
+
+
+@tool
+async def get_allowed_components_by_placeholder(
+    page_id: str,
+    placeholder_name: str,
+) -> dict:
+    """Retrieve the components allowed in a specific placeholder on a page.
+
+    Read-only — no confirmation required. Call this before add_component_on_page
+    to know which component rendering IDs are valid for a given placeholder.
+
+    Args:
+        page_id:          ID of the page
+        placeholder_name: Placeholder path, e.g. "jss-main" or "/jss-main/jss-header"
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "components": [], "error": str(exc)}
+    return await get_allowed_components_api(
+        page_id=page_id,
+        placeholder_name=placeholder_name,
+        auth_token=auth_token,
+    )
+
+
+@tool
+async def get_page_preview_url(
+    page_id: str,
+    language: str = "",
+) -> dict:
+    """Get the preview URL for a page so the marketer can review it in a browser.
+
+    Read-only — no confirmation required.
+
+    Args:
+        page_id:  ID of the page
+        language: Language version (optional — omit for the default language)
+
+    Returns {success, page_id, preview_url}.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "preview_url": None, "error": str(exc)}
+    return await get_page_preview_url_api(page_id=page_id, auth_token=auth_token, language=language)
+
+
+@tool
+async def get_all_pages_by_site(
+    site_name: str,
+    language: str = "en",
+) -> dict:
+    """Retrieve a flat list of all pages on a site by site name.
+
+    Read-only — no confirmation required. Useful for auditing a full site structure
+    or finding page paths when the page tree is small enough to enumerate.
+
+    Args:
+        site_name: The site's unique name (not ID), e.g. "my-marketing-site"
+        language:  Language code (default "en")
+
+    Returns {success, pages, total_count} where each page has {page_id, name, path, language}.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "pages": [], "error": str(exc)}
+    return await get_all_pages_by_site_api(
+        site_name=site_name,
+        language=language,
+        auth_token=auth_token,
+    )

@@ -1,0 +1,806 @@
+{
+  "id": "8f07f96e-696a-4a5c-ade1-d3ef92740df9",
+  "icon": null,
+  "name": "Cresa Demo",
+  "status": "Approved",
+  "locale": "en-us",
+  "fields": {
+    "Objectives": {
+      "type": "RichText",
+      "value": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "The primary objective of this campaign is to build awareness and generate excitement about the launch of Cresa's new office in Santa Fe, New Mexico. The campaign seeks to increase visibility within the local market, establish Cresa as a trusted partner for corporate real estate solutions, and create meaningful community engagement. Success will be measured through heightened brand presence in Santa Fe, attendance at launch activities, and initial inquiries or partnerships stemming from the campaign."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "TargetAudience": {
+      "type": "RichText",
+      "value": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Our target audience includes:"
+              }
+            ]
+          },
+          {
+            "type": "orderedList",
+            "attrs": {
+              "order": 1
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Business Decision-Makers:"
+                      },
+                      {
+                        "type": "text",
+                        "text": " CEOs, CFOs, and real estate directors of local companies seeking expertise in corporate real estate solutions."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Local Entrepreneurs and Startups:"
+                      },
+                      {
+                        "type": "text",
+                        "text": " Growing businesses that require office space and advisory services."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Community Influencers:"
+                      },
+                      {
+                        "type": "text",
+                        "text": " Local officials, media representatives, and industry leaders who can amplify messaging."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Residents in Santa Fe Metropolis:"
+                      },
+                      {
+                        "type": "text",
+                        "text": " Professionals and creatives interested in innovative workspaces and corporate real estate trends."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Local Partners:"
+                      },
+                      {
+                        "type": "text",
+                        "text": " Businesses seeking collaboration opportunities for office space solutions and resources."
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "Message": {
+      "type": "RichText",
+      "value": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Cresa's new Santa Fe office is here to empower local businesses with expert corporate real estate solutions tailored to their growth and success. By championing transparency, collaboration, and forward-thinking strategies, we bring a fresh and insightful approach to the local market. Together, let's shape the future of work environments in Santa Fe."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "CreativeRequirements": {
+      "type": "RichText",
+      "value": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "attrs": {
+              "order": 1
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Brand Guidelines Adherence:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Use transparent, professional, and authoritative tone."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Avoid sales-heavy language, overly trendy visual elements."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Incorporate branding elements (logos, colors, and fonts) consistently."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Mandatory Inclusions:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Cresa's tagline and logo."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Accessibility-compliant designs."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Disclaimers or legal copy when required."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Prohibited Elements:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Aggressive or corporate jargon."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Overly complicated or trendy messaging."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Visual gimmicks incongruent with Cresa's brand."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "Timeline": {
+      "type": "Timeline",
+      "value": {
+        "startDate": "2026-05-14",
+        "endDate": "2026-07-19",
+        "events": [
+          {
+            "title": "Launch \"Coming Soon\" Announcement",
+            "dueDate": "2026-05-21"
+          },
+          {
+            "title": "Initiate Geo-Targeted Advertising Campaign",
+            "dueDate": "2026-05-28"
+          },
+          {
+            "title": "Engage Local Media and Announce Launch Event",
+            "dueDate": "2026-06-04"
+          },
+          {
+            "title": "Partner with Local Businesses and Events",
+            "dueDate": "2026-06-11"
+          },
+          {
+            "title": "Grand Opening Event in Santa Fe",
+            "dueDate": "2026-06-25"
+          },
+          {
+            "title": "Post-Event Follow-Up and Community Engagement",
+            "dueDate": "2026-07-02"
+          },
+          {
+            "title": "Digital Content Campaign Showcasing New Office",
+            "dueDate": "2026-07-09"
+          },
+          {
+            "title": "Final Analysis and Wrap-Up of Campaign",
+            "dueDate": "2026-07-19"
+          }
+        ]
+      }
+    },
+    "DueDate": {
+      "type": "DateTime",
+      "value": "2026-07-19T23:59:59+00:00"
+    },
+    "Budget": {
+      "type": "Budget",
+      "value": {
+        "type": "Budget",
+        "currency": "USD",
+        "amount": 50000.0
+      }
+    },
+    "MarketResearch": {
+      "type": "RichText",
+      "value": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "attrs": {
+              "order": 1
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Santa Fe Business Demographics:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Santa Fe's business environment includes a mix of small-to-medium-sized enterprises, arts and culture centers, and a growing tech sector."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "There is an emphasis on creative industries and a strong local appreciation for community and heritage."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Competitor Landscape:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Few competitors explicitly offer corporate real estate solutions tailored to this demographic, creating an opportunity for Cresa to fill the niche."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Consumer Behavior Trends:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "A strong preference for local partnerships and engagement."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Growing interest in sustainable and collaborative work environments."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Media Consumption Patterns:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "High engagement with local publications, social media channels, and events."
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Radio remains popular for regional targeting."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "marks": [
+                          {
+                            "type": "bold"
+                          }
+                        ],
+                        "text": "Cultural Insights:"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Santa Fe's unique culture revolves around heritage, arts, and community storytelling, making local alignment critical for resonance."
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "AdditionalNotes": {
+      "type": "RichText",
+      "value": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Align the campaign messaging with Santa Fe's community-centric values."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Emphasize how Cresa's expertise can serve as a unique asset to the local business environment."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Avoid making overtly corporate-sounding claims; instead, focus on partnership and advocacy."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Incorporate testimonials or case studies where possible to build trust and credibility."
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Use visuals that highlight Santa Fe's cultural landmarks and integrate them subtly into Cresa's brand aesthetic."
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph"
+          }
+        ]
+      }
+    }
+  },
+  "isTemplate": false,
+  "contributors": [],
+  "createdBy": {
+    "type": "ExternalLink",
+    "relatedSystem": "xmcloud",
+    "relatedType": null,
+    "id": "auth0|64b05c37336367a15cb7dcc9"
+  },
+  "createdOn": "2026-05-14T20:32:58.8518046Z",
+  "updatedBy": {
+    "type": "ExternalLink",
+    "relatedSystem": "xmcloud",
+    "relatedType": null,
+    "id": "auth0|64b82d33c3569e6cb54f7c8b"
+  },
+  "updatedOn": "2026-06-24T18:04:38.5538178Z",
+  "briefType": {
+    "type": "Link",
+    "relatedType": "BriefType",
+    "id": "e52ccc77-6d49-477e-a238-94f790802711",
+    "uri": "https://co-brief-api-use.sitecorecloud.io/api/brief/v1/brief-types/e52ccc77-6d49-477e-a238-94f790802711"
+  }
+}

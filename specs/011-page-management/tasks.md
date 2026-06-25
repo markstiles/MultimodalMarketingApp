@@ -92,6 +92,37 @@
 
 ---
 
+## Phase 7: Post-MVP Enhancements (Added post-spec)
+
+These tasks were identified during live testing and added without a spec revision cycle. They extend the original spec's scope and should be reflected in a spec.md update.
+
+- [X] T024 Add `_INSERT_OPTIONS_CACHE` in-process cache (120 s TTL) to `pages_service.get_insert_options_api` — keyed by `(parent_page_id, site_id, language, insert_option_kind)`; eliminates N+1 API calls during bulk sitemap creation; empty results are NOT cached so transient failures don't persist
+- [X] T025 Add `build_site_pages` service function and `create_site_pages` @tool in `backend/app/clients/pages_api.py` — accepts a full sitemap spec (`[{name, parent, template_hint}]`); detects pre-existing pages via search, resolves parent IDs across passes (queue-based retry for out-of-order lists), defers children of same-pass parents to next pass (CMS propagation buffer), auto-selects templates via fuzzy hint matching; register in `tools.py`; add full multi-level sitemap example to `page-management.md`
+- [X] T026 Add `open_page` composite @tool in `backend/app/clients/pages_api.py` — wraps `search_pages_api`; returns `{navigated: True, page_id}` for single match, list for multiple; register in `tools.py`; emit `canvas_navigate` SSE event in `chat_service.py` when tool returns `navigated: True`
+- [X] T027 Wire `canvas_navigate` SSE event end-to-end — add `"canvas_navigate"` to `SseEvent` union in `frontend/lib/types.ts`; add `canvasNavigate` state to `useChat.ts`; add `navigateToPage` effect to `ChatPanel.tsx` calling `useSitecoreContext().navigateToPage(page_id)`
+- [X] T028 Fix `_WRITE_TOOLS` in `chat_service.py` — add `create_site_pages`, `rename_page`, `duplicate_page`, `delete_page`, `update_page_fields`, `create_page_version`, `set_fallback_language` so all page write operations trigger a canvas reload
+- [X] T029 Add Intent Classification section to `page-management.md` — table mapping signal words to correct tool; rule that ambiguous "open X" requests default to navigation not creation; add Navigation flow section describing `open_page` usage
+- [X] T030 Add "Honesty About Capabilities" section to `base.md` — never take an approximate action when intent is unclear; ask first; prefer saying "I can't do that" over doing the wrong thing
+- [X] T031 Fix search response parsing and add navigation strategies — root cause of empty search results was wrong response key (`results` not `data`/`items`, per pages-api.json spec); also fixed pagination params (`pageSize`/`pageNumber` not `skip`/`take`); updated page dict fields to match spec (`parent_id`, `template_id`, `has_children`, `has_presentation`); BFS in `open_page` now prunes leaf nodes via `has_children`; added three strategies (`local`, `wide`, `full`) to `open_page` with strategy selection step in `page-management.md` and escalation path (local → wide → full on miss)
+
+---
+
+## Phase 8: Agent API Page Operations
+
+> These tasks use the Sitecore Agent API (`SITECORE_AGENTS_API_BASE_URL`) which is the preferred surface over the lower-level Pages API where operations overlap. Agent API does not require `environmentId` — it is derived from context.
+
+- [X] T032 [P] Add `add_language_to_page` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+- [X] T033 [P] Add `add_component_on_page` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+- [X] T034 [P] Add `get_components_on_page` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+- [X] T035 [P] Add `set_component_datasource` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+- [X] T036 [P] Add `get_allowed_components_by_placeholder` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+- [X] T037 [P] Add `get_page_preview_url` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+- [ ] T038 [P] Add `get_page_screenshot` @tool — deferred; screenshot returns binary image data requiring multimodal handling; implement when multimodal tool response support is added
+- [ ] T039 Upgrade `create_page` to use Agent API — deferred; refactoring existing tool carries regression risk; agent API version preferred but Pages API version functional
+- [X] T040 [P] Add `get_all_pages_by_site` @tool — `backend/app/clients/pages_api.py` + `backend/app/services/pages_service.py`; registered in `backend/app/clients/tools.py`
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
