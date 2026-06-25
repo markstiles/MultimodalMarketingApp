@@ -136,7 +136,14 @@ async def stream_chat(
 
         # Tools that mutate Sitecore Pages content — trigger a canvas reload when they complete
         _WRITE_TOOLS = frozenset({
-            "create_page", "add_language_to_page", "add_component_on_page",
+            # Pages API write tools
+            "create_page", "create_site_pages",
+            "rename_page", "duplicate_page", "delete_page",
+            "update_page_fields", "create_page_version",
+            # Sites API write tools
+            "set_fallback_language",
+            # MCP / component write tools
+            "add_language_to_page", "add_component_on_page",
             "set_component_datasource", "create_component_ds",
             "create_content_item", "update_fields_on_item", "update_content",
             "delete_content", "update_asset", "create_perso_version",
@@ -147,6 +154,7 @@ async def stream_chat(
         # Stream from LangGraph — 30 s timeout per event to detect hung tool calls
         full_response = ""
         write_occurred = False
+        navigate_page_id: str | None = None
         _auto_options_emitted: set[str] = set()  # first auto-options emission per tool wins per turn
         try:
             gen = get_chat_graph().astream_events(
@@ -182,6 +190,21 @@ async def stream_chat(
                         "get_environment_languages",
                         "list_site_collections",
                     }
+                    if tool_name == "open_page":
+                        raw = event.get("data", {}).get("output")
+                        output = raw
+                        if hasattr(raw, "content"):
+                            try:
+                                output = json.loads(raw.content)
+                            except Exception:
+                                output = {}
+                        elif isinstance(raw, str):
+                            try:
+                                output = json.loads(raw)
+                            except Exception:
+                                output = {}
+                        if isinstance(output, dict) and output.get("navigated") and output.get("page_id"):
+                            navigate_page_id = output["page_id"]
                     if tool_name == "create_marketing_site":
                         raw = event.get("data", {}).get("output")
                         output = raw
@@ -295,6 +318,8 @@ async def stream_chat(
 
         if write_occurred:
             yield _event({"type": "canvas_reload"})
+        if navigate_page_id:
+            yield _event({"type": "canvas_navigate", "page_id": navigate_page_id})
 
         # Persist assistant message
         await append_message(db, conversation_id, MessageRole.assistant, full_response)

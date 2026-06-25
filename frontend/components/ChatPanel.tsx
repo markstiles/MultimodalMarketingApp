@@ -8,14 +8,19 @@ import { ChatInput } from "./ChatInput";
 import { MessageList } from "./MessageList";
 
 export function ChatPanel() {
-  const { context, loading: contextLoading, reloadCanvas } = useSitecoreContext();
-  const { messages, streaming, toolActivity, canvasReload, loading, error, send, retry } = useChat();
+  const { context, loading: contextLoading, reloadCanvas, navigateToPage } = useSitecoreContext();
+  const { messages, streaming, toolActivity, canvasReload, canvasNavigate, loading, error, send, retry } = useChat();
   const [pendingImages, setPendingImages] = useState<ImageResult[]>([]);
 
   // Reload the Sitecore Pages canvas whenever a write tool completes
   useEffect(() => {
     if (canvasReload > 0) reloadCanvas();
   }, [canvasReload, reloadCanvas]);
+
+  // Navigate to a page when the open_page tool resolves a single match
+  useEffect(() => {
+    if (canvasNavigate) navigateToPage(canvasNavigate);
+  }, [canvasNavigate, navigateToPage]);
 
   function handleSend(text: string) {
     if (!context) return;

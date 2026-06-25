@@ -60,6 +60,7 @@ export type SseEvent =
   | { type: "tool_start"; tool: string }
   | { type: "tool_end"; tool: string }
   | { type: "canvas_reload" }
+  | { type: "canvas_navigate"; page_id: string }
   | { type: "image_results"; results: ImageResult[]; query: string; count: number }
   | { type: "options"; items: OptionItem[]; prompt: string; option_type: string; count: number }
   | { type: "job_started"; handle: string; name: string }

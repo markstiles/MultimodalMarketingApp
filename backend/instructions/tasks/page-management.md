@@ -1,6 +1,21 @@
 # Task Overlay: Page Management
 
-This overlay is loaded when the marketer's intent relates to creating, finding, or managing Sitecore pages. It governs the guided conversation flow for all page operations. All Sitecore page write operations require explicit marketer confirmation before any tool is called.
+This overlay is loaded when the marketer's intent relates to creating, finding, navigating to, or managing Sitecore pages. It governs the guided conversation flow for all page operations. All Sitecore page write operations require explicit marketer confirmation before any tool is called.
+
+## Intent Classification — Read This First
+
+Before calling any tool, classify the marketer's intent. These categories are mutually exclusive:
+
+| Intent | Signal words | Correct tool | NEVER do |
+|--------|-------------|-------------|----------|
+| **Navigate / Open** | "open", "go to", "show me", "take me to", "navigate to", "view", "see", "load", "switch to", "bring up" | `open_page` | Do NOT create a page |
+| **Find / Search** | "find", "search for", "look up", "where is", "list pages" | `search_pages` | Do NOT create a page |
+| **Create** | "create", "add", "make", "build", "generate a new page" | Guided creation flow | Requires explicit confirmation |
+| **Manage** | "rename", "delete", "duplicate", "update field", "get status" | Relevant management tool | Requires explicit confirmation |
+
+**Critical rule**: If the request is ambiguous between navigating and creating, **always assume navigation**. Only trigger the creation flow when the marketer explicitly says "create", "add", "make", or similar. "Open the Detail Page" means navigate to it — not create a new one.
+
+**If you genuinely cannot identify the intent**, ask: "Are you looking to open an existing page, or create a new one?" Never take an action you are not confident about.
 
 ## Session Context
 
@@ -10,6 +25,42 @@ Every page operation requires three values from the active session context:
 - `language` — the active language (default: `"en"`)
 
 Always pass these from session context to all page tool calls. Never ask the marketer for these values.
+
+---
+
+## Navigate to a Page
+
+Use this flow when the marketer wants to **open or navigate to** an existing page.
+
+**Before searching**: Use the exact name the marketer gave you as the search query. On default Sitecore site templates, pages are often literally named "Landing Page" and "Detail Page" — those ARE valid page names, not just template type names. Search for what the marketer said.
+
+### Step 1 — Choose a search strategy
+
+Before calling `open_page`, present the three strategies as options using `present_options`:
+
+| Strategy | When to use |
+|----------|-------------|
+| **Local** | You're already inside the section containing the page (e.g. viewing a blog listing and want to open a specific article). Searches only under the current page — fast, one call. |
+| **Wide** | You don't know where the page is, or it's a top-level page. Searches the full tree level by level, first 20 items per level. Works for most marketing sites. |
+| **Full** | Wide search missed it, or the site has large sections (100+ articles, large product catalogues). Same as wide but pages through all items at each level. Slower. |
+
+If the marketer's context already makes the right strategy obvious (e.g. they say "open an article from this blog"), pre-select it and skip the question.
+
+### Step 2 — Call `open_page`
+
+Call `open_page` with:
+- The page's **display name** as `query`
+- The chosen `strategy`
+- `context_page_id` from session context (always — enables the context-branch fast path for wide/full, and is required for local)
+
+### Step 3 — Handle the result
+
+- **Single match** (`navigated: true`): The editor navigates automatically. Confirm:
+  > "Navigated to **[display_name]**."
+- **Multiple matches** (`navigated: false`, list returned): Call `present_options` with the page list. Wait for the marketer to click, then call `open_page` again with the exact page name.
+- **No match with local**: Offer to retry with `wide`.
+- **No match with wide**: Offer to retry with `full`.
+- **No match with full**: Tell the marketer no page was found with that name and suggest a different search term. Never say "there are no pages on this site."
 
 ---
 
@@ -70,50 +121,83 @@ On failure, report the error and offer to retry or choose a different location.
 
 ## Sitemap / Bulk Page Creation
 
-Use this flow when the marketer wants to implement a sitemap or create multiple pages in one session. **Do not skip or reorder these steps** — pages created with invented template names will always fail.
+Use this flow when the marketer wants to implement a sitemap or create multiple pages in one session.
 
 ### Step 1 — Find the home page
 
-Call `search_pages` with `query="Home"` to locate the site root. You need its `page_id` before anything else.
+Call `search_pages` with `query="Home"` to locate the site root. Record its `page_id`.
 
 ### Step 2 — Discover available templates (required)
 
-Call `get_insert_options` on the home page ID. This is mandatory — it reveals the exact template names the site supports. Common templates are things like "Landing Page", "Detail Page", "Search Page". You MUST use these exact names; do not invent alternatives.
+Call `get_insert_options` on the home page ID. This reveals the exact template names the site supports (e.g. "Landing Page", "Detail Page", "Search Page").
 
-### Step 3 — Present the template menu to the marketer
+Present the available templates to the marketer:
 
-Tell the marketer what templates are available:
+> "This site supports these page types: **Landing Page**, **Detail Page**, **Search Page**."
 
-> "This site supports these page types: **Landing Page**, **Detail Page**, **Search Page**. I'll use these when building out your sitemap."
+If the marketer's desired sitemap references types that don't exist (e.g. "About Us Page"), propose the closest match:
 
-If the marketer's requested sitemap includes page types that don't match (e.g., "About Us Page"), explain the constraint and propose which available template fits best:
-
-> "There's no 'About Us' template — I'd create that as a **Landing Page**. Does that work?"
+> "There's no 'About Us' template — I'll create that as a **Landing Page**. Does that work?"
 
 Wait for confirmation before proceeding.
 
-### Step 4 — Draft the sitemap plan
+**If `get_insert_options` returns an empty list** (which can occur transiently), do NOT stop. Tell the marketer:
+> "I couldn't retrieve page types from Sitecore right now — I'll ask for them again when we start creating pages. Let's continue planning the sitemap."
 
-Generate the sitemap using ONLY the confirmed template names. Present it as a table for marketer review:
+Then proceed to Step 3. `create_site_pages` fetches insert-options internally per parent page and will retry automatically. Use "Landing" as the default `template_hint` for section pages and "Detail" for leaf pages.
+
+### Step 3 — Present the full sitemap plan for approval
+
+Show the complete plan as a table. Include EVERY page at every depth level, its immediate parent, and the template it will use:
 
 | Page Name | Parent | Template |
 |---|---|---|
 | About Us | Home | Landing Page |
 | Services | Home | Landing Page |
 | Contact | Home | Detail Page |
+| Team | About Us | Detail Page |
+| History | About Us | Detail Page |
+| Web Design | Services | Detail Page |
 
-Ask: "Ready to create these pages? I'll build them one at a time."
+Ask: "Ready to create these pages?"
 
-### Step 5 — Create pages sequentially
+Do NOT proceed until the marketer explicitly confirms.
 
-Create pages one at a time using `create_page`. Report each result as it completes:
+### Step 4 — Execute with `create_site_pages`
 
-> "✓ Created **About Us** (Landing Page) under Home"
-> "✓ Created **Services** (Landing Page) under Home"
+Call `create_site_pages` **once** with the full pages list — all levels in one call.
 
-If any creation fails, stop and report the error. Do not continue creating the remaining pages until the marketer decides how to handle the failure.
+Key rules for the `pages` list:
+- Include every page at every depth in a single call (do NOT call per-level or per-branch).
+- `parent` must be the **display name** of the immediate parent page (case-insensitive match). Only top-level pages directly under the site root use `"home"`.
+- Child pages always reference their direct parent — never "home" unless the page actually sits at the root level.
+- Order does not matter; the tool resolves parents across multiple passes automatically.
 
-Do NOT call `get_insert_options` again during creation — the result is cached and reused automatically.
+The tool handles everything internally:
+- Searches for each page by name to detect ones that already exist (skips them)
+- Tracks newly created page IDs so nested pages can reference their parents
+- Defers children until their parent has fully settled in the CMS (prevents race conditions)
+- Fetches insert-options once per parent and reuses the cached result
+- Auto-selects the closest matching template for each page
+
+Use `template_hint` to guide template selection (a partial name like "Landing" or "Detail" is fine):
+
+```json
+[
+  {"name": "About Us",   "parent": "home",     "template_hint": "Landing"},
+  {"name": "Services",   "parent": "home",     "template_hint": "Landing"},
+  {"name": "Contact",    "parent": "home",     "template_hint": "Detail"},
+  {"name": "Team",       "parent": "About Us", "template_hint": "Detail"},
+  {"name": "History",    "parent": "About Us", "template_hint": "Detail"},
+  {"name": "Web Design", "parent": "Services", "template_hint": "Detail"}
+]
+```
+
+After it returns, report the summary to the marketer:
+
+> "Done — created 4 pages, skipped 0 (already existed), failed 0."
+
+If any pages failed, explain why and offer to retry or adjust the plan. Do NOT call `create_site_pages` again for the whole list — only retry the failed items (using `create_page` for individual retries).
 
 ---
 

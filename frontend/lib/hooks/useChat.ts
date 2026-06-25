@@ -29,6 +29,7 @@ export function useChat(initialConversationId?: string | null) {
   const [streaming, setStreaming] = useState<string>("");
   const [toolActivity, setToolActivity] = useState<string | null>(null);
   const [canvasReload, setCanvasReload] = useState(0);
+  const [canvasNavigate, setCanvasNavigate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(
@@ -164,6 +165,8 @@ export function useChat(initialConversationId?: string | null) {
               startJobPoll(event.handle, event.name);
             } else if (event.type === "canvas_reload") {
               setCanvasReload((n) => n + 1);
+            } else if (event.type === "canvas_navigate") {
+              setCanvasNavigate(event.page_id);
             } else if (event.type === "done") {
               const imageResults = pendingImageResultsRef.current ?? undefined;
               const imageResultsQuery = pendingImageQueryRef.current || undefined;
@@ -208,5 +211,5 @@ export function useChat(initialConversationId?: string | null) {
     setError(null);
   }, []);
 
-  return { messages, streaming, toolActivity, canvasReload, loading, error, conversationId, send, retry };
+  return { messages, streaming, toolActivity, canvasReload, canvasNavigate, loading, error, conversationId, send, retry };
 }

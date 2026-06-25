@@ -47,31 +47,31 @@ def _auth_headers(auth_token: str) -> dict[str, str]:
 
 @api_endpoint(exposed=True, category="pages")
 async def search_pages_api(
-    root_page_id: str,
+    root_page_id: str | list[str],
     query: str,
     language: str,
     auth_token: str,
+    page_number: int = 1,
+    page_size: int = 20,
 ) -> dict:
-    base_url = _get_base_url()
-    if not query or not query.strip():
-        return {
-            "success": False,
-            "pages": [],
-            "total_count": 0,
-            "has_more": False,
-            "error": (
-                "searchText is required and cannot be empty. "
-                "To find the site home page, pass root_page_id=site_id and query='Home'."
-            ),
-        }
+    """Search for pages under one or more root IDs.
 
-    # rootIds is an array param; httpx repeats the key for each list entry.
-    params: list[tuple[str, str]] = [
-        ("rootIds", root_page_id),
-        ("searchText", query.strip()),
-    ]
+    Pass query="" to enumerate all children at a level without filtering.
+    rootIds accepts multiple values — all roots are searched in a single request.
+    Use page_number/page_size to paginate through large levels (full strategy).
+    """
+    base_url = _get_base_url()
+    roots = [root_page_id] if isinstance(root_page_id, str) else root_page_id
+
+    # rootIds is a repeatable array param; httpx emits one key per entry.
+    params: list[tuple[str, str]] = [("rootIds", r) for r in roots]
+    if query and query.strip():
+        params.append(("searchText", query.strip()))
     if language:
         params.append(("language", language))
+    params.append(("pageSize", str(page_size)))
+    if page_number > 1:
+        params.append(("pageNumber", str(page_number)))
 
     try:
         async with httpx.AsyncClient(timeout=15) as http:
@@ -89,28 +89,38 @@ async def search_pages_api(
         logger.error("search_pages_api error: %s", exc)
         return {"success": False, "pages": [], "total_count": 0, "has_more": False, "error": str(exc)}
 
-    raw_pages = data.get("data", data) if isinstance(data, dict) else data
-    if isinstance(raw_pages, dict):
-        raw_pages = raw_pages.get("items", [])
+    # Response shape: {"totalCount": N, "results": [...Page objects...]}
+    raw_pages = data.get("results") if isinstance(data, dict) else None
+    if raw_pages is None:
+        raw_pages = data if isinstance(data, list) else []
 
     pages = [
         {
             "page_id": _normalize_id(p.get("id", "")),
-            "display_name": p.get("displayName", p.get("name", "")),
-            "parent_path": p.get("parentPath", p.get("path", "")),
-            "template_name": p.get("templateName", ""),
-            "is_folder": p.get("isFolder", False),
-            "site_id": p.get("siteId", ""),
+            "display_name": p.get("displayName") or p.get("name", ""),
+            "parent_id": _normalize_id(p.get("parentId", "")),
+            "template_id": _normalize_id(p.get("templateId", "")),
+            "has_children": p.get("hasChildren", False),
+            "has_presentation": p.get("hasPresentation", True),
+            "language": p.get("language", ""),
         }
         for p in (raw_pages if isinstance(raw_pages, list) else [])
     ]
 
-    total = data.get("total", len(pages)) if isinstance(data, dict) else len(pages)
+    if not pages and query:
+        logger.warning(
+            "search_pages_api: 0 results for query=%r rootIds=%s; response keys=%s",
+            query,
+            roots,
+            list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+        )
+
+    total = data.get("totalCount", len(pages)) if isinstance(data, dict) else len(pages)
     return {
         "success": True,
-        "pages": pages[:20],
+        "pages": pages,
         "total_count": total,
-        "has_more": total > 20,
+        "has_more": (page_number * page_size) < total,
         "error": None,
     }
 
@@ -152,9 +162,37 @@ async def get_insert_options_api(
         logger.error("get_insert_options_api error: %s", exc)
         return {"success": False, "insert_options": [], "error": str(exc)}
 
-    raw = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    logger.debug(
+        "get_insert_options_api response type=%s keys=%s",
+        type(data).__name__,
+        list(data.keys()) if isinstance(data, dict) else "N/A",
+    )
+
+    # Try all known response envelope shapes the Pages API may return.
+    if isinstance(data, list):
+        raw = data
+    elif isinstance(data, dict):
+        raw = (
+            data.get("data")
+            or data.get("items")
+            or data.get("insertOptions")
+            or data.get("value")
+            or []
+        )
+    else:
+        raw = []
+
     if raw and isinstance(raw, list):
-        logger.info("get_insert_options_api first item keys: %s, sample: %s", list(raw[0].keys()), raw[0])
+        logger.info(
+            "get_insert_options_api parent=%s found %d options; first=%s",
+            parent_page_id, len(raw), raw[0],
+        )
+    else:
+        logger.warning(
+            "get_insert_options_api parent=%s returned empty options; raw=%r full_response=%r",
+            parent_page_id, raw, data,
+        )
+
     options = [
         {
             "template_id": _normalize_id(t.get("id") or t.get("templateId") or ""),
@@ -163,7 +201,10 @@ async def get_insert_options_api(
         for t in (raw if isinstance(raw, list) else [])
     ]
     result = {"success": True, "insert_options": options, "error": None}
-    _INSERT_OPTIONS_CACHE[cache_key] = (now + _INSERT_OPTIONS_TTL, result)
+    # Only cache non-empty results so a transient empty response doesn't block
+    # retries for the full TTL window.
+    if options:
+        _INSERT_OPTIONS_CACHE[cache_key] = (now + _INSERT_OPTIONS_TTL, result)
     return result
 
 
@@ -254,6 +295,165 @@ async def create_page_api(
         "display_name": d.get("displayName") or d.get("pageName") or display_name,
         "version": None,
         "error": None,
+    }
+
+
+def _match_template(hint: str, templates: list[dict]) -> dict:
+    """Pick the best template from the available list using a fuzzy hint.
+
+    Priority:
+    1. Exact case-insensitive match on template_name
+    2. hint is a substring of template_name
+    3. template_name is a substring of hint
+    4. First template (fallback)
+    If hint is empty, prefer templates whose name contains "landing", then first.
+    """
+    if not templates:
+        raise ValueError("No templates available")
+    if not hint:
+        for t in templates:
+            if "landing" in t.get("template_name", "").lower():
+                return t
+        return templates[0]
+    h = hint.lower()
+    for t in templates:
+        if t.get("template_name", "").lower() == h:
+            return t
+    for t in templates:
+        if h in t.get("template_name", "").lower():
+            return t
+    for t in templates:
+        if t.get("template_name", "").lower() in h:
+            return t
+    return templates[0]
+
+
+async def build_site_pages(
+    site_id: str,
+    home_page_id: str,
+    language: str,
+    auth_token: str,
+    pages: list[dict],
+) -> dict:
+    """Orchestrate creation of multiple pages from a sitemap specification.
+
+    For each entry in `pages`:
+      - Searches by name to detect pages that already exist (skips them but
+        records their IDs so child pages can reference them as parents).
+      - Resolves the parent page: "home" → home_page_id, or the display name
+        of another entry in the sitemap (created or pre-existing).
+      - Retrieves insert-options for the parent (result is cached 120 s).
+      - Auto-selects the template that best matches template_hint.
+      - Creates the page via the Pages API.
+
+    Pages are processed in order; entries whose parent hasn't been resolved yet
+    are deferred and retried on subsequent passes (handles nested hierarchies).
+
+    Each entry in `pages` dict:
+        name            (str, required) Display name for the new page.
+        parent          (str, default "home") "home" or the display name of the
+                        parent page — either pre-existing or another entry in
+                        this list.
+        template_hint   (str, optional) Partial/full name of the desired
+                        template (case-insensitive). If omitted or unmatched,
+                        the most general available template is used.
+
+    Returns dict with: created, skipped, failed, summary.
+    """
+    page_id_by_name: dict[str, str] = {"home": home_page_id}
+    created: list[dict] = []
+    skipped: list[dict] = []
+    failed: list[dict] = []
+
+    # Step 1: Detect which desired pages already exist.
+    for spec in pages:
+        name = spec.get("name", "").strip()
+        if not name or name.lower() in page_id_by_name:
+            continue
+        search = await search_pages_api(home_page_id, name, language, auth_token)
+        for p in search.get("pages", []):
+            if p.get("display_name", "").lower() == name.lower():
+                pid = p["page_id"]
+                page_id_by_name[name.lower()] = pid
+                skipped.append({
+                    "name": name,
+                    "reason": "already exists",
+                    "page_id": pid,
+                    "template_id": p.get("template_id", ""),
+                })
+                break
+
+    # Step 2: Create missing pages with queue-based parent resolution.
+    skipped_names = {s["name"].lower() for s in skipped}
+    queue = [s for s in pages if s.get("name", "").strip().lower() not in skipped_names]
+
+    for _ in range(len(queue) + 1):
+        if not queue:
+            break
+        deferred = []
+        # Pages created in THIS pass are not yet ready to accept children — the
+        # CMS may not have fully propagated the new item. Any child whose parent
+        # was just created here is deferred to the next pass, giving the API one
+        # round-trip of settling time.
+        created_this_pass: set[str] = set()
+
+        for spec in queue:
+            name = spec.get("name", "").strip()
+            parent_ref = spec.get("parent", "home").strip().lower()
+            hint = spec.get("template_hint", "")
+
+            # Parent resolved but created in the same pass — defer.
+            if parent_ref in created_this_pass:
+                deferred.append(spec)
+                continue
+
+            parent_id = page_id_by_name.get(parent_ref)
+            if parent_id is None:
+                deferred.append(spec)
+                continue
+
+            options = (await get_insert_options_api(parent_id, site_id, language, auth_token)).get("insert_options", [])
+            if not options:
+                failed.append({"name": name, "reason": "No page templates available at the parent location"})
+                continue
+
+            try:
+                matched = _match_template(hint, options)
+            except ValueError as exc:
+                failed.append({"name": name, "reason": str(exc)})
+                continue
+
+            result = await create_page_api(site_id, parent_id, matched["template_id"], name, language, auth_token)
+            if result.get("success"):
+                pid = result["page_id"]
+                page_id_by_name[name.lower()] = pid
+                created_this_pass.add(name.lower())
+                created.append({
+                    "name": name,
+                    "page_id": pid,
+                    "template": matched["template_name"],
+                    "parent": spec.get("parent", "home"),
+                })
+            else:
+                failed.append({"name": name, "reason": result.get("error") or "Unknown error"})
+
+        queue = deferred
+
+    for spec in queue:
+        failed.append({
+            "name": spec.get("name", ""),
+            "reason": f"Parent '{spec.get('parent')}' was not found or could not be created",
+        })
+
+    return {
+        "success": bool(created) or (not failed),
+        "created": created,
+        "skipped": skipped,
+        "failed": failed,
+        "summary": (
+            f"Created {len(created)}, skipped {len(skipped)} (already existed), "
+            f"failed {len(failed)}"
+        ),
     }
 
 
