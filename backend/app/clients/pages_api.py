@@ -10,6 +10,7 @@ from app.services.pages_service import (
     get_allowed_components_api,
     get_components_on_page_api,
     get_page_preview_url_api,
+    get_page_screenshot_api,
     set_component_datasource_api,
     build_site_pages,
     create_page_api,
@@ -438,7 +439,8 @@ async def open_page(
                 scored = []
                 for page in all_pages.get("pages", []):
                     path = page.get("path", "") or ""
-                    score, display_name = _path_jaccard(query_words, path)
+                    name = page.get("name", "") or ""
+                    score, display_name = _path_jaccard(query_words, path, name)
                     if score > 0:
                         scored.append({
                             **page,
@@ -833,23 +835,70 @@ async def get_page_preview_url(
     return await get_page_preview_url_api(page_id=page_id, auth_token=auth_token, language=language)
 
 
-def _path_jaccard(query_words: set[str], path: str) -> tuple[float, str]:
+@tool
+async def get_page_screenshot(
+    page_id: str,
+    version: int = 1,
+    language: str = "en",
+    width: int | None = None,
+    height: int | None = None,
+) -> dict:
+    """Capture a screenshot of a page as a base64-encoded image.
+
+    Use this when the marketer wants to visually review a page without leaving
+    the chat, or before publishing to confirm layout and content look correct.
+    Read-only — no confirmation required.
+
+    Args:
+        page_id:  ID of the page to screenshot
+        version:  Page version number (default 1)
+        language: Language version (default "en")
+        width:    Viewport width in pixels (optional)
+        height:   Viewport height in pixels (optional)
+
+    Returns {success, page_id, screenshot_base64, type, encoding, full_page, timestamp}.
+    The screenshot_base64 field contains the raw base64 image data.
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "screenshot_base64": None, "error": str(exc)}
+    return await get_page_screenshot_api(
+        page_id=page_id,
+        auth_token=auth_token,
+        version=version,
+        language=language,
+        width=width,
+        height=height,
+    )
+
+
+def _path_jaccard(query_words: set[str], path: str, name: str = "") -> tuple[float, str]:
     """Score a page path against query words using Jaccard similarity.
 
     Each path segment (split on '/') is tokenized by splitting on '-'.  The
-    segment with the highest Jaccard score against the query is used, and its
-    human-readable form (dashes → spaces, title-cased) is returned as the
-    reconstructed display name.
+    segment with the highest Jaccard score against the query is used.
+
+    The root path "/" has no segments; it is treated as "Home" by Sitecore convention
+    and scored against {"home"} so that searching for "Home" resolves correctly.
+
+    The optional `name` parameter supplies the API-provided display name, which is
+    preferred over the path-reconstructed label when available.
 
     Example: query="Detail Page", path="/Landing-Page/Detail-Page"
       segment "Detail-Page" → words {"detail","page"} → Jaccard = 2/2 = 1.0
     """
     segments = [s for s in path.split("/") if s] if path else []
+
     if not segments:
-        return 0.0, "Home"
+        # Root path "/" is the Home page by Sitecore convention.
+        seg_words = {"home"}
+        union = query_words | seg_words
+        score = len(query_words & seg_words) / len(union) if union else 0.0
+        return score, name or "Home"
 
     best_score = 0.0
-    best_label = segments[-1].replace("-", " ").title()
+    best_label = name or segments[-1].replace("-", " ").title()
 
     for seg in segments:
         seg_words = set(seg.lower().replace("-", " ").split())
@@ -858,7 +907,8 @@ def _path_jaccard(query_words: set[str], path: str) -> tuple[float, str]:
         score = intersection / union if union else 0.0
         if score > best_score:
             best_score = score
-            best_label = seg.replace("-", " ").title()
+            # Prefer the API name; only fall back to path reconstruction if absent.
+            best_label = name or seg.replace("-", " ").title()
 
     return best_score, best_label
 
@@ -916,8 +966,9 @@ async def find_pages(
     query_words = set(query.strip().lower().split())
     scored: list[dict] = []
     for page in all_pages_result.get("pages", []):
-        path = page.get("path", "") or page.get("name", "") or ""
-        score, display_name = _path_jaccard(query_words, path)
+        path = page.get("path", "") or ""
+        name = page.get("name", "") or ""
+        score, display_name = _path_jaccard(query_words, path, name)
         if score > 0:
             scored.append({
                 **page,

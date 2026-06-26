@@ -42,6 +42,7 @@ async def list_brand_kits(stream_token: str) -> list[dict]:
                 "status": kit.get("status"),
                 "industry": kit.get("industry"),
                 "brand_name": kit.get("brandName"),
+                "description": kit.get("description"),
             }
             for kit in items
         ]
@@ -209,6 +210,86 @@ async def upload_brand_document(
         raise RuntimeError(f"Failed to upload brand document: HTTP {exc.response.status_code}") from exc
     except Exception as exc:
         raise RuntimeError(f"Failed to upload brand document: {exc}") from exc
+
+
+async def get_brand_kit_sections(
+    kit_id: str,
+    stream_token: str,
+    section_names: list[str] | None = None,
+) -> dict:
+    """Return brand kit section content filtered to the requested section names.
+
+    When section_names is None or empty, all sections with content are returned.
+    Section name matching is case-insensitive. Sections with no field content are
+    omitted from the result silently.
+
+    Returns:
+        {
+            "sections": [{"name": str, "content": str}, ...],
+            "empty_sections": [str, ...],   # requested but found empty
+            "missing_sections": [str, ...], # requested but not in kit at all
+        }
+    """
+    try:
+        all_sections = await _list_sections(kit_id, stream_token)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read brand kit sections: {exc}") from exc
+
+    section_index = {s.get("name", ""): s for s in all_sections}
+
+    if section_names:
+        requested_lower = {n.lower(): n for n in section_names}
+        matched = {
+            display: section_index[actual]
+            for actual, display in {
+                actual_name: requested_lower[actual_name.lower()]
+                for actual_name in section_index
+                if actual_name.lower() in requested_lower
+            }.items()
+        }
+        missing = [
+            n for n in section_names
+            if n.lower() not in {k.lower() for k in section_index}
+        ]
+    else:
+        matched = {name: sec for name, sec in section_index.items()}
+        missing = []
+
+    result_sections = []
+    empty_sections = []
+
+    for display_name, section in matched.items():
+        section_id = section.get("id")
+        if not section_id:
+            empty_sections.append(display_name)
+            continue
+        try:
+            fields = await _list_fields(kit_id, section_id, stream_token)
+        except Exception as exc:
+            logger.warning("Failed to read fields for section %s: %s", display_name, exc)
+            empty_sections.append(display_name)
+            continue
+
+        parts = []
+        for field in fields:
+            value = field.get("value")
+            if isinstance(value, str) and value.strip():
+                parts.append(f"**{field.get('name', '')}**: {value.strip()}")
+            elif isinstance(value, list):
+                items = [str(v) for v in value if v]
+                if items:
+                    parts.append(f"**{field.get('name', '')}**: {', '.join(items)}")
+
+        if parts:
+            result_sections.append({"name": display_name, "content": "\n\n".join(parts)})
+        else:
+            empty_sections.append(display_name)
+
+    return {
+        "sections": result_sections,
+        "empty_sections": empty_sections,
+        "missing_sections": missing,
+    }
 
 
 async def run_brand_review(kit_id: str, content: str, stream_token: str) -> dict:

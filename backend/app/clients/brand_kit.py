@@ -4,6 +4,7 @@ from langchain_core.tools import tool
 
 from app.services.brand_kit_service import (
     create_brand_kit,
+    get_brand_kit_sections as _get_brand_kit_sections,
     get_brand_kit_voice_sections,
     list_brand_kits,
     run_brand_review,
@@ -19,9 +20,10 @@ async def list_org_brand_kits() -> dict:
     """
     List all brand kits in the Sitecore Stream organization.
 
-    Call this at the start of the Brand Voice phase to check whether an existing
-    brand kit is available for the marketer's brand. Returns a list of kits with
-    their id, name, status, and industry.
+    Returns all kits regardless of status. Each kit includes its current status
+    (Published, Draft, In Process, Failed) so the marketer can see what's available
+    and take action on kits that aren't published yet. Returns id, name, status,
+    industry, and description for each kit.
 
     If the list is empty, offer the marketer the option to create a new brand kit
     and import their brand documents.
@@ -66,6 +68,43 @@ async def get_brand_voice_summary(kit_id: str) -> dict:
         return {"success": True, "kit_id": kit_id, **sections}
     except RuntimeError as exc:
         return {"success": False, "kit_id": kit_id, "error": str(exc)}
+
+
+@tool
+async def get_brand_kit_sections(
+    kit_id: str,
+    section_names: list[str] | None = None,
+) -> dict:
+    """Load specific brand guideline sections from a brand kit for use as content context.
+
+    Use this to inject task-appropriate brand guidelines into the conversation.
+    Which sections to request depends on the active task type:
+    - Component population / writing tasks: ["Tone of Voice", "Do's and Don'ts", "Grammar Checklists"]
+    - Image-related tasks: ["Visual Guidelines", "Brand Context"]
+    - General writing / all other tasks: pass section_names=None to load all sections
+
+    Sections with no content are omitted silently. Sections requested but not found
+    in the kit are reported in missing_sections so you can inform the marketer.
+
+    After loading, present the guidelines to the marketer as confirmation:
+    "I've loaded [section names] from **[kit name]** for this task."
+
+    Args:
+        kit_id:        Brand kit UUID (from list_org_brand_kits)
+        section_names: Names of sections to load, or None to load all sections
+
+    Returns {success, sections: [{name, content}], empty_sections, missing_sections}.
+    """
+    try:
+        token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc), "sections": []}
+
+    try:
+        result = await _get_brand_kit_sections(kit_id, token, section_names=section_names)
+        return {"success": True, "kit_id": kit_id, **result}
+    except RuntimeError as exc:
+        return {"success": False, "kit_id": kit_id, "error": str(exc), "sections": []}
 
 
 @tool

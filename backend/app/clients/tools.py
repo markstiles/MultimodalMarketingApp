@@ -13,6 +13,7 @@ from app.clients.brief import (
 )
 from app.clients.brand_kit import (
     create_org_brand_kit,
+    get_brand_kit_sections,
     get_brand_voice_summary,
     import_brand_document,
     list_org_brand_kits,
@@ -53,6 +54,7 @@ from app.clients.pages_api import (
     get_components_on_page,
     get_insert_options,
     get_page_preview_url,
+    get_page_screenshot,
     get_page_state,
     navigate_to_page,
     open_page,
@@ -139,6 +141,7 @@ def get_all_tools() -> list[BaseTool]:
         search_market_research,
         list_org_brand_kits,
         get_brand_voice_summary,
+        get_brand_kit_sections,
         create_org_brand_kit,
         import_brand_document,
         review_content_against_brand,
@@ -161,6 +164,7 @@ def get_all_tools() -> list[BaseTool]:
         set_component_datasource,
         get_allowed_components_by_placeholder,
         get_page_preview_url,
+        get_page_screenshot,
         get_all_pages_by_site,
         search_site_images,
         index_media_library_images,

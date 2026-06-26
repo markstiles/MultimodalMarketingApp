@@ -46,6 +46,19 @@ _TASK_SIGNALS: dict[str, list[str]] = {
         "site template", "site language", "site collection",
         "list sites", "show sites", "available sites",
     ],
+    "page-management": [
+        "open page", "open the page", "go to page", "navigate to", "show me the page",
+        "take me to", "load the page", "switch to page", "bring up",
+        "create page", "create a page", "new page", "add a page",
+        "rename page", "delete page", "duplicate page", "find page", "search for page",
+        "page not found", "where is the page",
+    ],
+    "brand-kit": [
+        "brand kit", "brand kits", "brand voice", "brand guidelines", "brand guide",
+        "brand compliance", "brand review", "on-brand", "is this on brand",
+        "tone of voice", "brand standards", "brand context",
+        "import brand", "upload brand", "create brand kit",
+    ],
 }
 
 

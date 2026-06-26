@@ -878,6 +878,51 @@ async def get_page_preview_url_api(
 
 
 @api_endpoint(exposed=True, category="pages")
+async def get_page_screenshot_api(
+    page_id: str,
+    auth_token: str,
+    version: int = 1,
+    language: str = "en",
+    width: int | None = None,
+    height: int | None = None,
+) -> dict:
+    """Capture a screenshot of a page via Agent API GET /api/v1/pages/{pageId}/screenshot."""
+    base = _get_agents_base_url()
+    normalized = _normalize_id(page_id)
+    params: dict = {"version": version, "language": language}
+    if width is not None:
+        params["width"] = width
+    if height is not None:
+        params["height"] = height
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.get(
+                f"{base}/api/v1/pages/{normalized}/screenshot",
+                params=params,
+                headers=_auth_headers(auth_token),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error("get_page_screenshot_api HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return {"success": False, "screenshot_base64": None, "error": str(exc)}
+    except Exception as exc:
+        logger.error("get_page_screenshot_api error: %s", exc)
+        return {"success": False, "screenshot_base64": None, "error": str(exc)}
+
+    return {
+        "success": True,
+        "page_id": page_id,
+        "screenshot_base64": data.get("screenshot_base64"),
+        "type": data.get("type", "png"),
+        "encoding": data.get("encoding", "base64"),
+        "full_page": data.get("fullPage", True),
+        "timestamp": data.get("timestamp"),
+        "error": None,
+    }
+
+
+@api_endpoint(exposed=True, category="pages")
 async def get_all_pages_by_site_api(
     site_name: str,
     language: str,
