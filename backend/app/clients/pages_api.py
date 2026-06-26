@@ -22,6 +22,7 @@ from app.services.pages_service import (
     search_pages_api,
     update_page_fields_api,
 )
+from app.services.sites_service import list_sites
 from app.services.sitecore_auth import get_sitecore_automation_token
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,17 @@ async def search_pages(
     language: str,
 ) -> dict:
     """
-    Search for pages whose display name contains the query string, scoped to the
-    subtree rooted at root_page_id. Returns up to 20 matches per page with
-    page_id, display_name, parent_id, has_children, and has_presentation.
-    If has_more is True, refine the query to narrow results.
+    Search for pages whose display name contains the query string.
+
+    Automatically escalates scope when nothing is found:
+    1. Root search — scoped to root_page_id (typically the site_id).
+    2. Under-home search — if root returns 0, finds the home page and searches
+       its direct children. Covers the standard Site → Home → pages structure.
+    The response includes a "search_scope" field ("root" or "under_home") and a
+    "note" when nothing was found at either level.
+
+    Returns up to 20 matches per page with page_id, display_name, parent_id,
+    has_children, and has_presentation. If has_more is True, refine the query.
 
     Use this to obtain a valid page_id before calling create_page.
     NEVER invent a page_id — always use one returned by this tool.
@@ -69,7 +77,35 @@ async def search_pages(
     except RuntimeError as exc:
         return {"success": False, "pages": [], "total_count": 0, "has_more": False, "error": str(exc)}
 
-    return await search_pages_api(root_page_id, query, language, auth_token)
+    # Step 1: search scoped to root_page_id (typically the site_id).
+    result = await search_pages_api(root_page_id, query, language, auth_token)
+    if result.get("pages"):
+        result["search_scope"] = "root"
+        return result
+
+    # Step 2: find the home page so we can search one level deeper.
+    # The pages search API requires rootIds, so there is no global search.
+    # The typical Sitecore structure is Site → Home → [pages], meaning pages
+    # like "Detail Page" are not direct children of the site root and will not
+    # appear in a root-scoped search.
+    home_result = await search_pages_api(root_page_id, "Home", language, auth_token)
+    home_pages = [
+        p for p in home_result.get("pages", [])
+        if "home" in p.get("display_name", "").lower()
+    ]
+    if home_pages:
+        home_id = home_pages[0]["page_id"]
+        under_home = await search_pages_api(home_id, query, language, auth_token)
+        if under_home.get("pages"):
+            under_home["search_scope"] = "under_home"
+            return under_home
+
+    result["search_scope"] = "root"
+    result["note"] = (
+        f"No pages matching '{query}' found under the site root or home page. "
+        "Call find_pages(site_id=..., query=...) to search the full site tree."
+    )
+    return result
 
 
 search_pages._tier = TOOL_TIER_DIRECT
@@ -326,10 +362,10 @@ async def open_page(
       "local"  Search only under the currently viewed page (context_page_id). Fast.
                Best when the marketer is already inside the section they want.
                Returns no results if the page is outside the current branch.
-      "wide"   BFS from the site root, first 20 items per level. One API call per
-               depth level. Finds most pages on typical marketing sites (default).
-      "full"   BFS from the site root, all items per level with pagination. More
-               thorough for wide trees (large article/product listings). Slower.
+      "wide"   Try context branch → site root → home page in sequence.
+               Covers the standard Sitecore structure (Site → Home → pages) in
+               up to three API calls. Use this when location is unknown (default).
+      "full"   Alias for "wide" — behaves identically. Retained for compatibility.
 
     Args:
         site_id:         Active site identifier from session context
@@ -372,8 +408,11 @@ async def open_page(
         }
 
     # ── wide / full ───────────────────────────────────────────────────────────
-    # For both strategies, try the context branch first (one searchText call)
-    # before crawling from the site root — same fast-path benefit as local.
+    # The pages search API requires BOTH rootIds and searchText — there is no
+    # global search.  Try the context branch first (fast path), then fall back
+    # to a full site dump via the agents API with Jaccard scoring.
+
+    # Step 1: context branch fast-path.
     if context_page_id:
         result = await search_pages_api(context_page_id, query, language, auth_token)
         if result.get("success"):
@@ -381,47 +420,83 @@ async def open_page(
             if matches:
                 return await _navigation_result(matches, query)
 
-    # BFS from site root.  Each level is one call (wide) or one-or-more calls
-    # with pagination (full).  rootIds accepts a list so the full width of each
-    # level is covered in a single request regardless of branching factor.
-    # has_children prunes leaf nodes so we never request children of leaves.
-    roots: list[str] = [site_id]
-
-    for _ in range(_MAX_DEPTH):
-        all_level_pages: list[dict] = []
-        page_number = 1
-
-        while True:
-            result = await search_pages_api(roots, "", language, auth_token, page_number=page_number)
-            if not result.get("success"):
-                return {"success": False, "navigated": False, "pages": [], "error": result.get("error")}
-
-            batch = result.get("pages", [])
-            all_level_pages.extend(batch)
-
-            # wide: take the first page only; full: follow has_more
-            if strategy != "full" or not result.get("has_more") or not batch:
-                break
-            page_number += 1
-
-        if not all_level_pages:
-            break
-
-        matches = await _resolve_navigation_matches(all_level_pages, query_lower)
-        if matches:
-            return await _navigation_result(matches, query)
-
-        roots = [p["page_id"] for p in all_level_pages if p.get("has_children")]
+    # Step 2: full site dump via agents API + Jaccard scoring.
+    # The xmapps search API often cannot scope to the site_id and returns 0 results.
+    # Fall back to fetching all pages by site name and scoring by path similarity.
+    sites_result = await list_sites(auth_token)
+    if sites_result.get("success"):
+        site_name = next(
+            (s["name"] for s in sites_result.get("sites", []) if s.get("id", "").lower() == site_id.lower()),
+            None,
+        )
+        if site_name:
+            all_pages = await get_all_pages_by_site_api(
+                site_name=site_name, language=language, auth_token=auth_token
+            )
+            if all_pages.get("success"):
+                query_words = set(query_lower.split())
+                scored = []
+                for page in all_pages.get("pages", []):
+                    path = page.get("path", "") or ""
+                    score, display_name = _path_jaccard(query_words, path)
+                    if score > 0:
+                        scored.append({
+                            **page,
+                            "display_name": display_name,
+                            "similarity": round(score, 3),
+                        })
+                scored.sort(key=lambda p: p["similarity"], reverse=True)
+                top4 = scored[:4]
+                if top4:
+                    # Single unambiguous match (top score clearly ahead) — navigate directly.
+                    if len(top4) == 1 or top4[0]["similarity"] - top4[1]["similarity"] >= 0.4:
+                        best = top4[0]
+                        return {
+                            "success": True,
+                            "navigated": True,
+                            "page_id": best["page_id"],
+                            "display_name": best["display_name"],
+                            "pages": top4,
+                        }
+                    # Multiple plausible matches — return top 4 for user selection.
+                    return {
+                        "success": True,
+                        "navigated": False,
+                        "pages": top4,
+                        "message": (
+                            f"Found {len(scored)} pages matching '{query}'. "
+                            "Present these as options and call navigate_to_page with the chosen page_id."
+                        ),
+                    }
 
     return {
         "success": True,
         "navigated": False,
         "pages": [],
-        "message": f"No page found matching '{query}'. Try a different search term or strategy.",
+        "message": f"No page found matching '{query}'. Try a different search term.",
     }
 
 
 open_page._tier = TOOL_TIER_COMPOSITE
+
+
+@tool
+async def navigate_to_page(page_id: str) -> dict:
+    """Navigate directly to a page by its ID.
+
+    Use this after open_page or find_pages returns multiple options and the marketer
+    has selected one. Pass the page_id from the selected result — no additional
+    search is needed.
+
+    Args:
+        page_id: The page ID returned by open_page or find_pages
+    """
+    if not page_id or not page_id.strip():
+        return {"success": False, "navigated": False, "error": "page_id is required."}
+    return {"success": True, "navigated": True, "page_id": page_id.strip()}
+
+
+navigate_to_page._tier = TOOL_TIER_DIRECT
 
 
 @tool
@@ -758,6 +833,110 @@ async def get_page_preview_url(
     return await get_page_preview_url_api(page_id=page_id, auth_token=auth_token, language=language)
 
 
+def _path_jaccard(query_words: set[str], path: str) -> tuple[float, str]:
+    """Score a page path against query words using Jaccard similarity.
+
+    Each path segment (split on '/') is tokenized by splitting on '-'.  The
+    segment with the highest Jaccard score against the query is used, and its
+    human-readable form (dashes → spaces, title-cased) is returned as the
+    reconstructed display name.
+
+    Example: query="Detail Page", path="/Landing-Page/Detail-Page"
+      segment "Detail-Page" → words {"detail","page"} → Jaccard = 2/2 = 1.0
+    """
+    segments = [s for s in path.split("/") if s] if path else []
+    if not segments:
+        return 0.0, "Home"
+
+    best_score = 0.0
+    best_label = segments[-1].replace("-", " ").title()
+
+    for seg in segments:
+        seg_words = set(seg.lower().replace("-", " ").split())
+        intersection = len(query_words & seg_words)
+        union = len(query_words | seg_words)
+        score = intersection / union if union else 0.0
+        if score > best_score:
+            best_score = score
+            best_label = seg.replace("-", " ").title()
+
+    return best_score, best_label
+
+
+@tool
+async def find_pages(
+    site_id: str,
+    query: str,
+    language: str = "en",
+) -> dict:
+    """Find pages across the entire site using path-based Jaccard similarity scoring.
+
+    Use this when search_pages returns no results. It resolves the site name from
+    site_id automatically, fetches every page, and ranks results by how closely each
+    page's path segments match the query words.
+
+    The API does not return display names, so this tool reconstructs them by splitting
+    path segments on hyphens (e.g. "/Landing-Page/Detail-Page" → "Detail Page").
+    Results are sorted by similarity score (0–1) so the closest matches appear first.
+
+    Args:
+        site_id:  Active site identifier from session context (UUID)
+        query:    Page name to search for, e.g. "Detail Page"
+        language: Language code (default "en")
+    """
+    try:
+        auth_token = await get_sitecore_automation_token()
+    except RuntimeError as exc:
+        return {"success": False, "pages": [], "error": str(exc)}
+
+    # Resolve site name from site_id.
+    sites_result = await list_sites(auth_token)
+    if not sites_result.get("success"):
+        return {"success": False, "pages": [], "error": f"Could not list sites: {sites_result.get('error')}"}
+
+    site_name = next(
+        (s["name"] for s in sites_result.get("sites", []) if s.get("id", "").lower() == site_id.lower()),
+        None,
+    )
+    if not site_name:
+        return {
+            "success": False,
+            "pages": [],
+            "error": f"Site with id {site_id!r} not found. Call list_all_sites to verify the site exists.",
+        }
+
+    # Fetch all pages.
+    all_pages_result = await get_all_pages_by_site_api(
+        site_name=site_name, language=language, auth_token=auth_token
+    )
+    if not all_pages_result.get("success"):
+        return all_pages_result
+
+    # Score each page by Jaccard similarity between query words and path segments.
+    query_words = set(query.strip().lower().split())
+    scored: list[dict] = []
+    for page in all_pages_result.get("pages", []):
+        path = page.get("path", "") or page.get("name", "") or ""
+        score, display_name = _path_jaccard(query_words, path)
+        if score > 0:
+            scored.append({
+                **page,
+                "display_name": display_name,
+                "similarity": round(score, 3),
+            })
+
+    scored.sort(key=lambda p: p["similarity"], reverse=True)
+    return {
+        "success": True,
+        "pages": scored,
+        "total_count": len(scored),
+        "site_name": site_name,
+    }
+
+
+find_pages._tier = TOOL_TIER_COMPOSITE
+
+
 @tool
 async def get_all_pages_by_site(
     site_name: str,
@@ -774,6 +953,21 @@ async def get_all_pages_by_site(
 
     Returns {success, pages, total_count} where each page has {page_id, name, path, language}.
     """
+    import re as _re
+    _UUID_RE = _re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.I
+    )
+    if _UUID_RE.match(site_name.strip()):
+        return {
+            "success": False,
+            "pages": [],
+            "error": (
+                f"{site_name!r} looks like a site ID (UUID), not a site name. "
+                "Call list_all_sites first to get the site's unique name "
+                "(e.g. 'my-marketing-site'), then pass that name here."
+            ),
+        }
+
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:

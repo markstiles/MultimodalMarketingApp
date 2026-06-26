@@ -134,9 +134,9 @@ export function useSitecoreContext() {
     clientRef.current?.mutate("pages.reloadCanvas");
   }, []);
 
-  /** Tell the Pages editor to navigate its content tree to the given page ID. */
+  /** Tell the Pages editor to navigate to the given page ID. */
   const navigateToPage = useCallback((pageId: string) => {
-    clientRef.current?.mutate("pages.navigate", { pageId });
+    clientRef.current?.mutate("pages.context", { params: { itemId: pageId } });
   }, []);
 
   return { context, loading, reloadCanvas, navigateToPage };

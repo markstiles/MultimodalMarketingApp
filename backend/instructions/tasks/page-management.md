@@ -34,33 +34,35 @@ Use this flow when the marketer wants to **open or navigate to** an existing pag
 
 **Before searching**: Use the exact name the marketer gave you as the search query. On default Sitecore site templates, pages are often literally named "Landing Page" and "Detail Page" — those ARE valid page names, not just template type names. Search for what the marketer said.
 
-### Step 1 — Choose a search strategy
-
-Before calling `open_page`, present the three strategies as options using `present_options`:
-
-| Strategy | When to use |
-|----------|-------------|
-| **Local** | You're already inside the section containing the page (e.g. viewing a blog listing and want to open a specific article). Searches only under the current page — fast, one call. |
-| **Wide** | You don't know where the page is, or it's a top-level page. Searches the full tree level by level, first 20 items per level. Works for most marketing sites. |
-| **Full** | Wide search missed it, or the site has large sections (100+ articles, large product catalogues). Same as wide but pages through all items at each level. Slower. |
-
-If the marketer's context already makes the right strategy obvious (e.g. they say "open an article from this blog"), pre-select it and skip the question.
-
-### Step 2 — Call `open_page`
+### Step 1 — Call `open_page`
 
 Call `open_page` with:
 - The page's **display name** as `query`
-- The chosen `strategy`
-- `context_page_id` from session context (always — enables the context-branch fast path for wide/full, and is required for local)
+- `strategy`: use `"local"` only if the marketer is already inside the section; use `"wide"` (default) otherwise
+- `context_page_id` from session context (always)
 
-### Step 3 — Handle the result
+`open_page` tries the context branch first, then fetches the full site tree and scores results by similarity automatically. Do not call `search_pages` before calling `open_page`.
 
-- **Single match** (`navigated: true`): The editor navigates automatically. Confirm:
-  > "Navigated to **[display_name]**."
-- **Multiple matches** (`navigated: false`, list returned): Call `present_options` with the page list. Wait for the marketer to click, then call `open_page` again with the exact page name.
-- **No match with local**: Offer to retry with `wide`.
-- **No match with wide**: Offer to retry with `full`.
-- **No match with full**: Tell the marketer no page was found with that name and suggest a different search term. Never say "there are no pages on this site."
+### Step 2 — Handle the result
+
+**Navigated directly** (`navigated: true`): Confirm to the marketer:
+> "Navigated to **[display_name]**."
+
+**Multiple matches** (`navigated: false`, `pages` list returned): The API found several similar pages. Present the top results as clickable buttons — call `present_options` with up to **4 items**, using each page's `display_name` as the label and `page_id` as the id. After the marketer clicks one, call `navigate_to_page` with that `page_id`. Do NOT call `open_page` again.
+
+```
+present_options(
+  items=[{"id": page_id, "label": display_name, "description": path}, ...],  # top 4 only
+  prompt="Which page would you like to open?",
+  option_type="generic"
+)
+```
+
+**No match** (`pages` empty): The page was not found. Ask the marketer to try a different name or confirm the page exists. Never say "there are no pages on this site."
+
+### Step 3 — No match with local strategy
+
+If `open_page` with `"local"` returns no match, automatically retry with `"wide"` — no need to ask the marketer.
 
 ---
 
@@ -77,10 +79,10 @@ Do not proceed to step 2 until the parent location is identified.
 
 ### Step 2 — Find the parent page
 
-Call `search_pages` with the marketer's description as the query to find the parent page ID.
+Call `search_pages` with the site_id as `root_page_id` and the marketer's description as the query. If that returns no results, call `find_pages` with the same site_id and query — it fetches and filters the full site tree in one call.
 
 - If multiple matches are returned, present them and ask the marketer to confirm which one is the intended parent.
-- If no matches are returned, tell the marketer the location could not be found and ask for an alternative description.
+- If no matches are found after the full site search, tell the marketer the location could not be found and ask for an alternative description.
 - Do not attempt creation until a single parent page ID is confirmed.
 
 ### Step 3 — Retrieve available page types
@@ -205,11 +207,12 @@ If any pages failed, explain why and offer to retry or adjust the plan. Do NOT c
 
 Use this flow when the marketer wants to **find pages** without an immediate follow-up action.
 
-1. Call `search_pages` with the marketer's query.
+1. Call `search_pages` with the site_id as `root_page_id` and the marketer's query. The tool automatically checks under the site root and under the home page.
 2. Present results as a list with display name and parent path.
 3. If `has_more` is `true`, add: "There are more results — try a more specific search term to narrow it down."
-4. If no results: "No pages matched '[query]'. Would you like to try a different search term, or create a new page instead?"
-5. If the marketer wants to act on a result (manage, rename, etc.), confirm which page they mean before calling any write tool — especially if multiple pages share a similar name.
+4. If no results: call `find_pages` with the site_id from session context and the same query. This fetches and filters the full site tree in one call.
+5. If still no results after the full site search: "No pages matched '[query]' on this site. Would you like to try a different search term, or create a new page instead?"
+6. If the marketer wants to act on a result, confirm which page they mean before calling any write tool — especially if multiple pages share a similar name.
 
 ---
 

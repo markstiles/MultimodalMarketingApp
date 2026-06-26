@@ -193,7 +193,7 @@ async def stream_chat(
                         "get_environment_languages",
                         "list_site_collections",
                     }
-                    if tool_name == "open_page":
+                    if tool_name in {"open_page", "navigate_to_page"}:
                         raw = event.get("data", {}).get("output")
                         output = raw
                         if hasattr(raw, "content"):
