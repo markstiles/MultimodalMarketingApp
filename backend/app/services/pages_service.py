@@ -591,14 +591,17 @@ async def create_page_version_api(
 @api_endpoint(exposed=False, category="pages")
 async def delete_page_api(
     page_id: str,
+    site_id: str,
     auth_token: str,
 ) -> dict:
     base_url = _get_base_url()
     normalized = _normalize_id(page_id)
     try:
         async with httpx.AsyncClient(timeout=15) as http:
-            resp = await http.delete(
+            resp = await http.request(
+                "DELETE",
                 f"{base_url}/{normalized}",
+                json={"site": site_id},
                 headers=_auth_headers(auth_token),
             )
             resp.raise_for_status()

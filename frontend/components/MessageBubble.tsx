@@ -32,7 +32,7 @@ export function MessageBubble({ message, streaming, onImagesSelected, onSelectOp
           className="max-w-[85%] rounded-lg px-3 py-2 text-xs leading-relaxed break-words"
           style={{ background: "#f3f4f6", color: "#1f2937" }}
         >
-          <div className="prose prose-neutral max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:text-xs [&_table]:block [&_table]:overflow-x-auto">
+          <div className="chat-prose prose prose-neutral max-w-none text-xs [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:text-xs [&_table]:block [&_table]:overflow-x-auto">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
           {streaming !== undefined && (

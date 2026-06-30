@@ -369,7 +369,8 @@ async def open_page(
       "full"   Alias for "wide" — behaves identically. Retained for compatibility.
 
     Args:
-        site_id:         Active site identifier from session context
+        site_id:         Active site identifier from session context (UUID). Never guess
+                         a site name — pass the UUID directly; resolution happens internally.
         environment:     Active environment identifier from session context
         query:           Page display name to search for (e.g. "About Us", "Contact", "Home")
         language:        Language code, e.g. "en"
@@ -424,52 +425,47 @@ async def open_page(
     # Step 2: full site dump via agents API + Jaccard scoring.
     # The xmapps search API often cannot scope to the site_id and returns 0 results.
     # Fall back to fetching all pages by site name and scoring by path similarity.
-    sites_result = await list_sites(auth_token)
-    if sites_result.get("success"):
-        site_name = next(
-            (s["name"] for s in sites_result.get("sites", []) if s.get("id", "").lower() == site_id.lower()),
-            None,
+    site_name, _err = await _resolve_site_name(site_id, auth_token)
+    if site_name:
+        all_pages = await get_all_pages_by_site_api(
+            site_name=site_name, language=language, auth_token=auth_token
         )
-        if site_name:
-            all_pages = await get_all_pages_by_site_api(
-                site_name=site_name, language=language, auth_token=auth_token
-            )
-            if all_pages.get("success"):
-                query_words = set(query_lower.split())
-                scored = []
-                for page in all_pages.get("pages", []):
-                    path = page.get("path", "") or ""
-                    name = page.get("name", "") or ""
-                    score, display_name = _path_jaccard(query_words, path, name)
-                    if score > 0:
-                        scored.append({
-                            **page,
-                            "display_name": display_name,
-                            "similarity": round(score, 3),
-                        })
-                scored.sort(key=lambda p: p["similarity"], reverse=True)
-                top4 = scored[:4]
-                if top4:
-                    # Single unambiguous match (top score clearly ahead) — navigate directly.
-                    if len(top4) == 1 or top4[0]["similarity"] - top4[1]["similarity"] >= 0.4:
-                        best = top4[0]
-                        return {
-                            "success": True,
-                            "navigated": True,
-                            "page_id": best["page_id"],
-                            "display_name": best["display_name"],
-                            "pages": top4,
-                        }
-                    # Multiple plausible matches — return top 4 for user selection.
+        if all_pages.get("success"):
+            query_words = set(query_lower.split())
+            scored = []
+            for page in all_pages.get("pages", []):
+                path = page.get("path", "") or ""
+                name = page.get("name", "") or ""
+                score, display_name = _path_jaccard(query_words, path, name)
+                if score > 0:
+                    scored.append({
+                        **page,
+                        "display_name": display_name,
+                        "similarity": round(score, 3),
+                    })
+            scored.sort(key=lambda p: p["similarity"], reverse=True)
+            top4 = scored[:4]
+            if top4:
+                # Single unambiguous match (top score clearly ahead) — navigate directly.
+                if len(top4) == 1 or top4[0]["similarity"] - top4[1]["similarity"] >= 0.4:
+                    best = top4[0]
                     return {
                         "success": True,
-                        "navigated": False,
+                        "navigated": True,
+                        "page_id": best["page_id"],
+                        "display_name": best["display_name"],
                         "pages": top4,
-                        "message": (
-                            f"Found {len(scored)} pages matching '{query}'. "
-                            "Present these as options and call navigate_to_page with the chosen page_id."
-                        ),
                     }
+                # Multiple plausible matches — return top 4 for user selection.
+                return {
+                    "success": True,
+                    "navigated": False,
+                    "pages": top4,
+                    "message": (
+                        f"Found {len(scored)} pages matching '{query}'. "
+                        "Present these as options and call navigate_to_page with the chosen page_id."
+                    ),
+                }
 
     return {
         "success": True,
@@ -670,7 +666,7 @@ async def delete_page(
     except RuntimeError as exc:
         return {"success": False, "page_id": None, "display_name": None, "version": None, "error": str(exc)}
 
-    return await delete_page_api(page_id, auth_token)
+    return await delete_page_api(page_id, site_id, auth_token)
 
 
 # delete_page_api is exposed=False (destructive); this is the only sanctioned call path.
@@ -873,6 +869,39 @@ async def get_page_screenshot(
     )
 
 
+async def _resolve_site_name(site_id: str, auth_token: str) -> tuple[str | None, str | None]:
+    """Resolve site_id (UUID or display name) to the Agents API site name.
+
+    Resolution order:
+      1. Exact case-insensitive match on the `id` field (UUID from session context).
+      2. Exact case-insensitive match on the `name` field (fallback when model passes display name).
+
+    Returns (site_name, None) on success or (None, error_message) on failure.
+    """
+    sites_result = await list_sites(auth_token)
+    if not sites_result.get("success"):
+        return None, f"Could not list sites: {sites_result.get('error')}"
+
+    sites = sites_result.get("sites", [])
+    sid_lower = site_id.strip().lower()
+
+    # 1. UUID match
+    match = next((s for s in sites if s.get("id", "").lower() == sid_lower), None)
+    if match:
+        return match["name"], None
+
+    # 2. Name match — model may pass display name instead of UUID
+    match = next((s for s in sites if s.get("name", "").lower() == sid_lower), None)
+    if match:
+        return match["name"], None
+
+    available = ", ".join(f'"{s["name"]}"' for s in sites[:6])
+    return None, (
+        f"Site {site_id!r} not found. Call list_all_sites to get the correct site_id. "
+        f"Known sites: {available}"
+    )
+
+
 def _path_jaccard(query_words: set[str], path: str, name: str = "") -> tuple[float, str]:
     """Score a page path against query words using Jaccard similarity.
 
@@ -921,16 +950,15 @@ async def find_pages(
 ) -> dict:
     """Find pages across the entire site using path-based Jaccard similarity scoring.
 
-    Use this when search_pages returns no results. It resolves the site name from
-    site_id automatically, fetches every page, and ranks results by how closely each
-    page's path segments match the query words.
+    Use this when search_pages returns no results. Fetches every page on the site
+    and ranks by how closely each page's path segments match the query words.
 
-    The API does not return display names, so this tool reconstructs them by splitting
-    path segments on hyphens (e.g. "/Landing-Page/Detail-Page" → "Detail Page").
-    Results are sorted by similarity score (0–1) so the closest matches appear first.
+    Always pass the `site_id` from session context (UUID). Never guess a site name —
+    the tool resolves the correct identifier internally. If site_id is unknown, call
+    list_all_sites first.
 
     Args:
-        site_id:  Active site identifier from session context (UUID)
+        site_id:  Site identifier from session context (UUID or value from list_all_sites)
         query:    Page name to search for, e.g. "Detail Page"
         language: Language code (default "en")
     """
@@ -939,21 +967,10 @@ async def find_pages(
     except RuntimeError as exc:
         return {"success": False, "pages": [], "error": str(exc)}
 
-    # Resolve site name from site_id.
-    sites_result = await list_sites(auth_token)
-    if not sites_result.get("success"):
-        return {"success": False, "pages": [], "error": f"Could not list sites: {sites_result.get('error')}"}
-
-    site_name = next(
-        (s["name"] for s in sites_result.get("sites", []) if s.get("id", "").lower() == site_id.lower()),
-        None,
-    )
+    # Resolve site name from site_id (UUID or display name).
+    site_name, err = await _resolve_site_name(site_id, auth_token)
     if not site_name:
-        return {
-            "success": False,
-            "pages": [],
-            "error": f"Site with id {site_id!r} not found. Call list_all_sites to verify the site exists.",
-        }
+        return {"success": False, "pages": [], "error": err}
 
     # Fetch all pages.
     all_pages_result = await get_all_pages_by_site_api(
@@ -990,39 +1007,33 @@ find_pages._tier = TOOL_TIER_COMPOSITE
 
 @tool
 async def get_all_pages_by_site(
-    site_name: str,
+    site_id: str,
     language: str = "en",
 ) -> dict:
-    """Retrieve a flat list of all pages on a site by site name.
+    """Retrieve a flat list of every page on a site.
 
     Read-only — no confirmation required. Useful for auditing a full site structure
-    or finding page paths when the page tree is small enough to enumerate.
+    or showing a complete page list.
+
+    Always pass the `site_id` from session context (the UUID the editor provides).
+    Never guess a site name — the tool resolves the correct Agents API identifier
+    internally. If site_id is unknown, call list_all_sites first.
 
     Args:
-        site_name: The site's unique name (not ID), e.g. "my-marketing-site"
-        language:  Language code (default "en")
+        site_id:  Site identifier from session context (UUID or value from list_all_sites)
+        language: Language code (default "en")
 
     Returns {success, pages, total_count} where each page has {page_id, name, path, language}.
     """
-    import re as _re
-    _UUID_RE = _re.compile(
-        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.I
-    )
-    if _UUID_RE.match(site_name.strip()):
-        return {
-            "success": False,
-            "pages": [],
-            "error": (
-                f"{site_name!r} looks like a site ID (UUID), not a site name. "
-                "Call list_all_sites first to get the site's unique name "
-                "(e.g. 'my-marketing-site'), then pass that name here."
-            ),
-        }
-
     try:
         auth_token = await get_sitecore_automation_token()
     except RuntimeError as exc:
         return {"success": False, "pages": [], "error": str(exc)}
+
+    site_name, err = await _resolve_site_name(site_id, auth_token)
+    if not site_name:
+        return {"success": False, "pages": [], "error": err}
+
     return await get_all_pages_by_site_api(
         site_name=site_name,
         language=language,
